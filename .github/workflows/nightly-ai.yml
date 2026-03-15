@@ -1,0 +1,54 @@
+name: nightly-ai-dev
+
+on:
+  schedule:
+    - cron: "0 17 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  nightly-task:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: |
+          git config user.name "nightly-ai-bot"
+          git config user.email "nightly-ai-bot@users.noreply.github.com"
+      - id: pick
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/pick-issue.mjs
+      - if: steps.pick.outputs.issue_number != ''
+        run: git checkout -b ai/issue-${{ steps.pick.outputs.issue_number }}
+      - if: steps.pick.outputs.issue_number != ''
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ISSUE_NUMBER: ${{ steps.pick.outputs.issue_number }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/nightly-agent.mjs
+      - if: steps.pick.outputs.issue_number != ''
+        run: npm run build
+      - if: steps.pick.outputs.issue_number != ''
+        run: |
+          git add .
+          git diff --cached --quiet || git commit -m "feat: solve issue #${{ steps.pick.outputs.issue_number }}"
+      - if: steps.pick.outputs.issue_number != ''
+        run: git push origin HEAD
+      - if: steps.pick.outputs.issue_number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr create \
+            --title "AI: issue #${{ steps.pick.outputs.issue_number }}" \
+            --body "Nightly AI implementation. Please review." \
+            --label human-review
