@@ -23,7 +23,8 @@ if (!target) {
   process.exit(0);
 }
 
-run(`gh issue edit ${target.number} --add-label in-progress`);
+try { run(`gh issue edit ${target.number} --add-label in-progress`); } catch(e) {}
+
 run(`gh issue comment ${target.number} --body "🤖 Nightly job started."`);
 
 fs.appendFileSync(outputFile, `issue_number=${target.number}\n`);
