@@ -29,7 +29,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/pick-issue.mjs
       - if: steps.pick.outputs.issue_number != ''
-        run: git checkout -b ai/issue-${{ steps.pick.outputs.issue_number }}
+        run: |
+          git push origin --delete ai/issue-${{ steps.pick.outputs.issue_number }} || true
+          git checkout -b ai/issue-${{ steps.pick.outputs.issue_number }}
       - if: steps.pick.outputs.issue_number != ''
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
