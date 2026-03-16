@@ -9,10 +9,6 @@ function run(cmd) {
   return execSync(cmd, { encoding: "utf8", stdio: ["pipe", "pipe", "inherit"] }).trim();
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function extractSection(body, title) {
   const regex = new RegExp(`## ${title}\\n([\\s\\S]*?)(\\n## |$)`, "i");
   const match = body.match(regex);
@@ -82,7 +78,7 @@ If unsafe, return: {"summary":"unsafe","files":[]}
 `;
 
 const response = await client.chat.completions.create({
-  model: "gpt-4o",
+  model: "gpt-4o-mini",
   messages: [{ role: "user", content: prompt }],
   max_tokens: 4000,
 });
