@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"Changes are necessary to remove the specified features, and the full content of the truncated files cannot be displayed safely or modified accordingly.","safe":false,"files":[]}
