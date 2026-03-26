@@ -1,25 +1,31 @@
 You are a careful coding agent.
 Make the smallest safe change to solve this issue.
 
-Issue: カレンダーとTODAYカードと気分ステータスを削除する
+Issue: VIALE: remove calendar and simplify profile for MVP
 
 Goal:
-カレンダー、TODAYカードとApp.cssのカレンダー関連スタイル、気分ステータス、常時オンライン表示のコードを削除する。
+カレンダー、TODAY、気分、常時オンライン表示を削除し、プロフィールをVIALE向けの最小構成に整理する。
 
 Why:
-VIALEはSNS化を避け、投稿・検索・感謝・街との接点がコア。これらの機能は不要。
+VIALEは最速公開を優先しており、今は足し算より引き算が重要。
+主役は投稿・検索・助かった・街との関わり方であり、重複機能やSNS演出を減らしたい。
 
 Do not touch:
-- Firebase security rules
-- 認証処理
-- src/firebase.js
+- Firebase設定
+- Firestoreルール
+- 地図のコア表示ロジック
+- 投稿作成の基本導線
 
 Acceptance checks:
-- npm run build が通る
-- 削除した機能が画面に表示されていない
+- カレンダーがUIから消えている
+- TODAYカードが消えている
+- 気分ステータスが消えている
+- 常時オンライン表示が消えている
+- プロフィールに残るのは、ヘッダー、アバター、名前、Bio、マイタグ、最近の記録、街との関わり方サマリーのみ
+- ビルドが通る
 
 Allowed files:
-src/App.jsx, src/App.css, src/components/Sidebar.jsx, src/components/Profile.jsx
+src/App.jsx, src/components/Sidebar.jsx, src/components/ProfileTab.jsx
 
 Important safety rules:
 - Only edit files listed in "Allowed files".
@@ -57,52 +63,6 @@ const NG_WORDS_EXACT=["死ね","死んで","死ねよ","死にな","死んでく
 const NG_PATTERNS=[/死[ねぬんで]+/,/殺[すせして害]/,/自[殺傷]/,/首[つ吊く]/,/飛[びん]降/
 // ... (truncated)
 
-=== src/App.css ===
-TRUNCATED: no
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
-}
-
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
-}
-
-.card {
-  padding: 2em;
-}
-
-.read-the-docs {
-  color: #888;
-}
-
-
 === src/components/Sidebar.jsx ===
 TRUNCATED: yes
 import { useState, useMemo, useEffect, useRef } from "react";
@@ -135,44 +95,5 @@ const DAILY_MISSIONS=[
   {id:"walk1km", label:"🚶 今日1km以上歩く",       points:4
 // ... (truncated)
 
-=== src/components/Profile.jsx ===
-TRUNCATED: yes
-import { useRef } from "react";
-
-export const CATEGORIES = [
-  { id:"helped",  label:"🤝 助けた",      color:"#10b981", question:"誰をどう助けましたか？",         placeholder:"例：重い荷物を持っていたお年寄りを手伝いました。",    action:"助けた記録を残す",    hint:"誰かの力になった" },
-  { id:"thanks",  label:"🙏 ありがとう",   color:"#f59e0b", question:"誰に何を感謝しましたか？",       placeholder:"例：道に迷っていたら目的地まで案内してくれる人がいました。", action:"感謝の記録を残す",    hint:"感謝を伝えた" },
-  { id:"smile",   label:"😊 笑顔を届けた", color:"#ec4899", question:"どうやって笑顔を届けましたか？", placeholder:"例：泣いている子どもに声をかけたら笑顔になってくれました。", action:"笑顔の記録を残す",    hint:"誰かを笑顔にした" },
-  { id:"picked",  label:"🔍 発見・拾得",   color:"#3b82f6", question:"何を見つけましたか？",           placeholder:"例：公園でお財布が落ちていたので交番に届けました。",      action:"発見した記録を残す",  hint:"困りごとを見つけた" },
-  { id:"clean",   label:"🧹 清掃・美化",   color:"#8b5cf6", question:"どんな活動をしましたか？",       placeholder:"例：通勤途中に駅前のゴミが気になって少し拾いながら歩きました。", action:"清掃の記録を残す",    hint:"街をきれいにした" },
-  { id:"other",   label:"💬 その他",       color:"#64748b", question:"どんなことがありましたか？",     placeholder:"例：雨の日に傘を持っていない人に少し一緒に歩いてあげました。", action:"記録を残す",          hint:"その他の出来事" },
-];
-
-export default function PostForm({
-  postText, setPostText, validation,
-  postCategory, setPostCategory,
-  postType, setPostType,
-  postPhoto, setPostPhoto,
-  postEventDate, setPostEventDate,
-  postExpiry, setPostExpiry,
-  chainPost,
-  isDark, T,
-  canPost, weatherInfo, userPosition,
-  onConfirm,
-}) {
-  const fileRef = useRef(null);
-
-  if (!userPosition) {
-    return (
-      <div style={{
-        position:"absolute", bottom:0, left:0, right:0,
-        background: isDark ? "rgba(5,8,16,.97)" : "rgba(255,255,255,.98)",
-        borderRadius:"20px 20px 0 0",
-        border:`1px solid ${T.border}`, borderBottom:"none",
-        backdropFilter:"blur(28px)", zIndex:1100,
-        padding:"28px 20px 36px", textAlign:"center",
-      }}>
-        <div style={{fontSize:40, marginBottom:12}}>📍</div>
-        <div style={{fontSize:14, fontWeight:800, color:T.text, marginBottom:8}}>位置情報が必要です</div>
-      
-// ... (truncated)
+=== src/components/ProfileTab.jsx ===
+TRUNCATED: no
