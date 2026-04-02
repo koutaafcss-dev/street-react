@@ -8,10 +8,16 @@ import { useAuth } from "./hooks/useAuth";
 import { useGPS } from "./hooks/useGPS";
 import { usePosts } from "./hooks/usePosts";
 import { useNotifications } from "./hooks/useNotifications";
-import { useGamification, COMMUNITY_GOALS } from "./hooks/useGamification";
+import { useGroup } from "./hooks/useGroup";
+import { usePostComposer } from "./hooks/usePostComposer";
+import { useUiShellState } from "./hooks/useUiShellState";
 import MapView from "./components/MapView";
 import Sidebar from "./components/Sidebar";
 import PostForm from "./components/PostForm";
+import GroupPanel from "./components/GroupPanel";
+import ProfileAvatarEditor from "./components/ProfileAvatarEditor";
+import TrajectoryHistoryModal from "./components/TrajectoryHistoryModal";
+import { expandPostsForMap } from "./utils/expandPostsForMap";
 
 const POST_RADIUS = 1;
 const POST_SUCCESS_MESSAGES=["📍 地図に記録しました","🌱 この場所に残しました","✨ マップに追加されました","💫 記録が完了しました","🗺️ 地図に刻まれました"];
@@ -25,33 +31,9 @@ const LEET_MAP={'☆':'','★':'','◆':'','◇':'','■':'','□':'','※':'','
 function normalizeText(t){let s=t.normalize("NFKC");for(const[k,v]of Object.entries(LEET_MAP))s=s.split(k).join(v);s=s.replace(/[\s\u200b\u3000\t\n\r　・･]/g,"");s=s.replace(/(.)\\1{2,}/g,"$1$1");s=s.replace(/shi/gi,"し").replace(/chi/gi,"ち").replace(/tsu/gi,"つ");return s;}
 function checkNG(text){if(!text?.trim())return{ok:false,message:"テキストを入力してください"};const raw=text.trim();if(raw.length<5)return{ok:false,message:"5文字以上入力してください"};if(raw.length>120)return{ok:false,message:"120文字以内で入力してください"};const n=normalizeText(raw);for(const w of NG_WORDS_EXACT)if(n.includes(normalizeText(w)))return{ok:false,message:"🚫 投稿できない内容が含まれています"};for(const p of NG_PATTERNS)if(p.test(n))return{ok:false,message:"🚫 投稿できない内容が含まれています"};return{ok:true,message:""};}
 
-function getWeatherInfo(code){
-  if(code===0)return{emoji:"☀️",label:"快晴",suggest:"☀️ 晴れの日に見つけた出来事を投稿しよう"};
-  if(code<=3)return{emoji:"⛅",label:"曇り",suggest:"⛅ 曇りの日も街では何かが起きている"};
-  if(code<=48)return{emoji:"🌫️",label:"霧",suggest:"🌫️ 霧の中での気づきを記録しよう"};
-  if(code<=67)return{emoji:"🌧️",label:"雨",suggest:"🌧️ 雨の日のエピソードを残しておこう"};
-  if(code<=77)return{emoji:"❄️",label:"雪",suggest:"❄️ 雪の日の出来事を地図に刻もう"};
-  if(code<=82)return{emoji:"🌦️",label:"にわか雨",suggest:"🌦️ 急な雨の日の記録を残そう"};
-  return{emoji:"⛈️",label:"雷雨",suggest:"⛈️ 嵐の日にも街の記録を"};
-}
 
-const DAILY_QUOTES=[
-  "今日、近くで見つけたものを地図に残してみよう",
-  "ベンチ・日陰・水場。記録が街を少し使いやすくする",
-  "誰かが困っている場所は、誰かが助かる場所でもある",
-  "1kmの中に、意外な発見がある",
-  "記録は小さくていい。それが積み重なって街になる",
-  "雨の日に助かった場所を、次の誰かのために残そう",
-  "街の記録は、歩いた人にしか書けない",
-  "トイレ・ゴミ箱・休憩できる場所。知っているだけで街が変わる",
-  "今日気づいたことが、誰かの「助かった」につながる",
-  "夜道の安心できる場所を見つけたら、記録してみよう",
-  "子ども連れが休める場所は、意外と少ない",
-  "投稿しなくても、探すだけでも使えるアプリです",
-  "近くに何があるかを知ることが、街とのつながりになる",
-  "小さな発見の積み重ねが、街を少し生きやすくする",
-];
-function getDailyQuote(){const d=new Date();const idx=(d.getFullYear()*1000+d.getMonth()*31+d.getDate())%DAILY_QUOTES.length;return DAILY_QUOTES[idx];}
+
+
 
 // getDistance はSidebar等でも使うため残す
 function getDistance(lat1,lng1,lat2,lng2){const R=6371,dLat=((lat2-lat1)*Math.PI)/180,dLng=((lng2-lng1)*Math.PI)/180;const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));}
@@ -136,102 +118,101 @@ export default function App(){
     onError: err => showToastRef.current?.(getFirestoreError(err), "error"),
   });
   const {
-    userPosition, gpsError, setGpsError,
+    userPosition, userAccuracy, gpsError, setGpsError,
     isTracking, setIsTracking,
-    trajectory, todayDist, totalDist,
+    trajectory, trajectoryHistory, trajectoryCount,
+    showTrajectoryOnMap, setShowTrajectoryOnMap,
+    todayDist, totalDist,
     clearTrajectory,
-  } = useGPS({
-    onWalkMilestone: dist => {
-      if (dist === "1km") gamificationRef.current?.checkWalkMission();
-    },
-  });
+  } = useGPS({});
   const { notifications, setNotifications, unreadCount, markAllRead } =
     useNotifications(posts, currentUser);
 
+  // ─── 投稿フォーム state (usePostComposer) ───
+  const {
+    postText, setPostText,
+    postType, setPostType,
+    postPhoto, setPostPhoto,
+    postEventDate, setPostEventDate,
+    postExpiry, setPostExpiry,
+    postNeedTags, setPostNeedTags,
+    chainPostId, setChainPostId,
+    isPosting, setIsPosting,
+    postPhase, setPostPhase,
+    postTimestamps, setPostTimestamps,
+    isFrozen, setIsFrozen,
+    resetForm: resetFormBase,
+  } = usePostComposer();
+
+  // ─── UI Shell state (useUiShellState) ───
+  const {
+    toast,
+    showToast,
+    showNotif, setShowNotif,
+    showSidebar, setShowSidebar,
+    showTutorial, setShowTutorial,
+    showStorage, setShowStorage,
+    showTerms, setShowTerms,
+    showGuide, setShowGuide,
+    showOpening, setShowOpening,
+    showNickEdit, setShowNickEdit,
+    showBioEdit, setShowBioEdit,
+    showTagsEdit, setShowTagsEdit,
+    showHeaderEdit, setShowHeaderEdit,
+    showAvatarEdit, setShowAvatarEdit,
+    newBannerCount, setNewBannerCount,
+    storageWarning, setStorageWarning,
+    showGroupPanel, setShowGroupPanel,
+    showLocationSettings, setShowLocationSettings,
+  } = useUiShellState();
+  showToastRef.current = showToast;
+
   // ─── UI State ───
-  const [postText,setPostText]=useState("");
-  const [postType,setPostType]=useState("normal");
-  const [postPhoto,setPostPhoto]=useState(null);
-  const [postEventDate,setPostEventDate]=useState("");
-  const [postExpiry,setPostExpiry]=useState("none");
-  const [postNeedTags,setPostNeedTags]=useState([]);
   const [flyToTarget,setFlyToTarget]=useState(null);
-  const [chainPostId,setChainPostId]=useState(null);
-  const [isPosting,setIsPosting]=useState(false);
-  const [postPhase,setPostPhase]=useState("form");
   const [radius,setRadius]=useState(5);
   const [activeTab,setActiveTab]=useState("feed");
   const [searchText,setSearchText]=useState("");
   const [sortMode,setSortMode]=useState("near");
-  const [isFrozen,setIsFrozen]=useState(false);
   const [editingId,setEditingId]=useState(null);
-  const [toast,setToast]=useState(null);
-  const [postTimestamps,setPostTimestamps]=useState([]);
-  const [showNotif,setShowNotif]=useState(false);
   const [isDark,setIsDark]=useState(()=>localStorage.getItem("zenTheme")!=="light");
   const [nickname,setNickname]=useState(()=>localStorage.getItem("zenNick")||"");
   const [bookmarks,setBookmarks]=useState(()=>load("zenBookmarks",[]));
-  const [showNickEdit,setShowNickEdit]=useState(false);
   // ─── プロフィール拡張 ───
   const [profileBio,setProfileBio]=useState(()=>localStorage.getItem("zenBio")||"");
   const [profileMyTags,setProfileMyTags]=useState(()=>load("zenMyTags",[]));
   const [profileHeaderColor,setProfileHeaderColor]=useState(()=>localStorage.getItem("zenHeaderColor")||"city");
   const [profileAvatarEmoji,setProfileAvatarEmoji]=useState(()=>localStorage.getItem("zenAvatar")||"🚶");
+  const [profileAvatarPhoto,setProfileAvatarPhoto]=useState(()=>localStorage.getItem("zenAvatarPhoto")||"");
   const [profilePinnedPostId,setProfilePinnedPostId]=useState(()=>localStorage.getItem("zenPinnedPost")||"");
-  const [showBioEdit,setShowBioEdit]=useState(false);
-  const [showTagsEdit,setShowTagsEdit]=useState(false);
-  const [showHeaderEdit,setShowHeaderEdit]=useState(false);
-  const [showAvatarEdit,setShowAvatarEdit]=useState(false);
   const [tagInputValue,setTagInputValue]=useState("");
   const [postEffect,setPostEffect]=useState(null);
   const [isMobile,setIsMobile]=useState(window.innerWidth<768);
-  const [showSidebar,setShowSidebar]=useState(false);
   const [highlightMine,setHighlightMine]=useState(false);
-  const [showTutorial,setShowTutorial]=useState(()=>!localStorage.getItem("zenTutorialDone"));
-  const [showDigest,setShowDigest]=useState(false);
   const [pwaPrompt,setPwaPrompt]=useState(null);
   const [pinnedIds,setPinnedIds]=useState(()=>load("zenPinned",[]));
   const [seenIds,setSeenIds]=useState(()=>load("zenSeen",[]));
-  const [showStorage,setShowStorage]=useState(false);
-  const [storageWarning,setStorageWarning]=useState(false);
   const [mood,setMood]=useState(()=>load("zenMood",{}));
   const lastPostIdRef=useRef(null);
-  const gamificationRef=useRef(null); // useGPS→useGamification 循環依存回避用
-  const [showOpening,setShowOpening]=useState(()=>!localStorage.getItem("zenOpeningDone"));
-  const [showTerms,setShowTerms]=useState(false);
-  const [showGuide,setShowGuide]=useState(false);
-  const [newBannerCount,setNewBannerCount]=useState(0);
+  const [showTrajectoryHistory,setShowTrajectoryHistory]=useState(false);
+  const [selectedLocations,setSelectedLocations]=useState([]);
   const initialLoadDoneRef=useRef(false);
   const prevPostsLengthRef=useRef(0);
 
+  // ─── グループ機能 ───
+  const {
+    myGroups, groupsLoading,
+    activeGroupId, setActiveGroupId,
+    activeGroupData, groupPosts, groupPostsLoading,
+    isAdmin: isGroupAdmin,
+    createGroup, joinByInviteCode, leaveGroup,
+    addGroupPost, deleteGroupPost,
+    regenerateInviteCode, updateGroupSettings,
+  } = useGroup(currentUser);
+
   const T=useMemo(()=>makeTheme(isDark),[isDark]);
 
-  const toastTimerRef=useRef(null);
-  const showToast=(msg,type="success")=>{
-    // 既存タイマーをクリアしてから新しいトーストを表示（競合防止）
-    if(toastTimerRef.current)clearTimeout(toastTimerRef.current);
-    setToast({msg,type});
-    toastTimerRef.current=setTimeout(()=>setToast(null),3200);
-  };
-  showToastRef.current=showToast;
 
-  // ─── useGamification（showToast確定後に初期化） ───
-  const gamification = useGamification({
-    posts,
-    currentUser,
-    totalLikes: posts.filter(p=>p.userId===currentUser).reduce((s,p)=>s+p.likes,0),
-    totalDist,
-    onToast: showToast,
-  });
-  // gamificationRef を最新値で更新（useGPS の onWalkMilestone から呼べるように）
-  gamificationRef.current = gamification;
-
-  const {
-    missionsDone, rankUp,
-    currentChallenge, isChallengeCleared,
-    streak, contributionScore, earnedBadges, myPosts,
-    checkMissions, checkGoodJobMission, checkRankUp,
-  } = gamification;
+  const myPosts=useMemo(()=>posts.filter(p=>p.userId===currentUser),[posts,currentUser]);
 
   useEffect(()=>{const h=e=>{e.preventDefault();setPwaPrompt(e);};window.addEventListener("beforeinstallprompt",h);return()=>window.removeEventListener("beforeinstallprompt",h);},[]);
 
@@ -256,6 +237,10 @@ export default function App(){
   useEffect(()=>{safeSave("zenMyTags",profileMyTags);},[profileMyTags]);
   useEffect(()=>{localStorage.setItem("zenHeaderColor",profileHeaderColor);},[profileHeaderColor]);
   useEffect(()=>{localStorage.setItem("zenAvatar",profileAvatarEmoji);},[profileAvatarEmoji]);
+  useEffect(()=>{
+    if(profileAvatarPhoto)localStorage.setItem("zenAvatarPhoto",profileAvatarPhoto);
+    else localStorage.removeItem("zenAvatarPhoto");
+  },[profileAvatarPhoto]);
   useEffect(()=>{localStorage.setItem("zenPinnedPost",profilePinnedPostId);},[profilePinnedPostId]);
   useEffect(()=>{const onResize=()=>setIsMobile(window.innerWidth<768);window.addEventListener("resize",onResize);return()=>window.removeEventListener("resize",onResize);},[]);
 
@@ -271,48 +256,70 @@ export default function App(){
   const canPost=validation.ok;
 
   const resetForm=useCallback(()=>{
-    setPostText("");setPostType("normal");setPostPhoto(null);
-    setPostEventDate("");setPostExpiry("none");setPostNeedTags([]);setChainPostId(null);
-    setIsPosting(false);setPostPhase("form");
-  },[]);
+    resetFormBase();
+    setSelectedLocations([]);
+  },[resetFormBase]);
 
-  const handleMapClick=useCallback(async(latlng)=>{
-    if(!isPosting||postPhase!=="picking")return;
+  const savePostWithSelectedLocations=useCallback(async()=>{
     if(!currentUser){showToast("認証中です。少しお待ちください","error");return;}
     if(!validation.ok){showToast(validation.message,"error");return;}
     if(isFrozen){showToast("投稿制限中です。しばらくお待ちください","error");return;}
-    if(userPosition){const dist=getDistance(userPosition[0],userPosition[1],latlng.lat,latlng.lng);if(dist>POST_RADIUS){showToast(`📍 現在地から${POST_RADIUS}km以内にしか投稿できません`,"error");return;}}
-    const now=Date.now();const newTs=[...postTimestamps,now].filter(t=>now-t<30000);
+    if(selectedLocations.length===0){showToast("地図をタップして場所を1つ以上追加してください","error");return;}
+
+    const now=Date.now();
+    const newTs=[...postTimestamps,now].filter(t=>now-t<30000);
     if(newTs.length>=3){setIsFrozen(true);setTimeout(()=>setIsFrozen(false),30000);showToast("連続投稿を検出しました。30秒後に解除されます","error");return;}
     setPostTimestamps(newTs);
-    // checkRankUp: contributionScore と同じ計算式（投稿×5 + helped×15 + likes×3）
-    const totalLk=myPosts.reduce((s,p)=>s+p.likes,0);
-    const totalH=myPosts.reduce((s,p)=>s+(p.helpedBy||[]).length,0);
-    const oldScore=myPosts.length*5+totalH*15+totalLk*3;
-    const newScore=(myPosts.length+1)*5+totalH*15+totalLk*3;
-    checkRankUp(oldScore,newScore);
+
     const expiryMs={none:null,"1h":3600000,"6h":21600000,"24h":86400000,"3d":259200000};
     let compressedPhoto=null;
     if(postPhoto){try{compressedPhoto=await compressImage(postPhoto);}catch(e){showToast(`📷 ${e.message}`,"error");return;}}
+
+    const locations=selectedLocations.map((loc,index)=>({
+      id:loc.id||`loc-${index+1}`,
+      lat:loc.lat,
+      lng:loc.lng,
+      label:loc.label||`地点${index+1}`
+    }));
+    const primary=locations[0];
+
     const postData={
       text:postText.trim(),tags:extractTags(postText),category:null,postType,
       needTags:postNeedTags,
       photo:compressedPhoto,eventDate:postType==="event"?postEventDate:null,
       expiresAt:expiryMs[postExpiry]?now+expiryMs[postExpiry]:null,
-      chainId:chainPostId,lat:latlng.lat,lng:latlng.lng,userId:currentUser,
+      chainId:chainPostId,lat:primary.lat,lng:primary.lng,userId:currentUser,
+      primaryLocation:{lat:primary.lat,lng:primary.lng,label:primary.label||""},
+      locations,locationCount:locations.length,
       likes:0,likedBy:[],helpedBy:[],reactions:{},comments:[],
       reports:0,reportedBy:[],hidden:false,edited:false,timestamp:now,
     };
+
     try{
       const docRef=await addDoc(collection(db,"posts"),postData);
       lastPostIdRef.current=docRef.id;
-      setPostEffect({lat:latlng.lat,lng:latlng.lng,type:postType,id:now});
+      setPostEffect({lat:primary.lat,lng:primary.lng,type:postType,id:now});
       setTimeout(()=>setPostEffect(null),2200);
-      checkMissions(postData);resetForm();setActiveTab("feed");
+      resetForm();setActiveTab("feed");
       if(isMobile)setShowSidebar(true);
-      showToast(getSuccessMessage(postType));
+      showToast(`${locations.length}地点で${getSuccessMessage(postType)}`);
     }catch(e){showToast(getFirestoreError(e,"投稿に失敗しました"),"error");}
-  },[isPosting,postPhase,currentUser,validation,isFrozen,postTimestamps,postText,postType,postPhoto,postEventDate,postExpiry,chainPostId,posts,checkMissions,isMobile,userPosition,resetForm]);
+  },[currentUser,validation,isFrozen,selectedLocations,postTimestamps,postPhoto,postText,postType,postNeedTags,postEventDate,postExpiry,chainPostId,resetForm,isMobile]);
+
+  const handleMapClick=useCallback((latlng)=>{
+    if(!isPosting||postPhase!=="picking")return;
+    if(!currentUser){showToast("認証中です。少しお待ちください","error");return;}
+    if(!validation.ok){showToast(validation.message,"error");return;}
+    if(isFrozen){showToast("投稿制限中です。しばらくお待ちください","error");return;}
+    if(userPosition){const dist=getDistance(userPosition[0],userPosition[1],latlng.lat,latlng.lng);if(dist>POST_RADIUS){showToast(`📍 現在地から${POST_RADIUS}km以内にしか投稿できません`,"error");return;}}
+    const point={id:`loc-${Date.now()}`,lat:latlng.lat,lng:latlng.lng,label:`地点${selectedLocations.length+1}`};
+    setSelectedLocations(prev=>[...prev,point]);
+    showToast(`地点を追加しました（${selectedLocations.length+1}件）`);
+  },[isPosting,postPhase,currentUser,validation,isFrozen,userPosition,selectedLocations.length]);
+
+  const handleRemoveSelectedLocation=useCallback((id)=>{
+    setSelectedLocations(prev=>prev.filter(loc=>loc.id!==id));
+  },[]);
 
   const handleDelete=async id=>{try{await deleteDoc(doc(db,"posts",id));showToast("投稿を削除しました");}catch(e){showToast(getFirestoreError(e),"error");}};
 
@@ -322,7 +329,6 @@ export default function App(){
    */
   const handleGoodJob=async id=>{
     if(!currentUser)return;
-    let isNewLike=false;
     try{
       await runTransaction(db,async transaction=>{
         const postRef=doc(db,"posts",id);
@@ -331,14 +337,11 @@ export default function App(){
         const data=snap.data();
         if(data.userId===currentUser)return; // self-like ブロック
         const liked=(data.likedBy||[]).includes(currentUser);
-        isNewLike=!liked;
         transaction.update(postRef,{
           likedBy:liked?arrayRemove(currentUser):arrayUnion(currentUser),
           likes:liked?Math.max(0,(data.likes||0)-1):(data.likes||0)+1,
         });
       });
-      // 副作用は transaction の外で実行
-      if(isNewLike)checkGoodJobMission();
     }catch(e){showToast(getFirestoreError(e),"error");}
   };
 
@@ -429,11 +432,22 @@ export default function App(){
   };  const handleBookmark=id=>{setBookmarks(prev=>prev.includes(id)?prev.filter(b=>b!==id):[...prev,id]);showToast(bookmarks.includes(id)?"ブックマークを解除しました":"🔖 ブックマークしました");};
   const handleShare=post=>{
     const text=`「${post.text}」`;
-    if(navigator.share)navigator.share({title:"まちの記録",text}).catch(()=>{});
+    if(navigator.share)navigator.share({title:"VIALE",text}).catch(()=>{});
     else navigator.clipboard.writeText(text).then(()=>showToast("📋 コピーしました")).catch(()=>showToast("コピーに失敗しました","error"));
   };
   const handleChain=id=>{setChainPostId(id);setIsPosting(true);setPostPhase("form");if(isMobile)setShowSidebar(false);};
-  const handleThanks=postId=>{const post=posts.find(p=>p.id===postId);if(!post||post.userId!==currentUser)return;const givers=(post.likedBy||[]).length;if(givers===0){showToast("まだGoodJobがありません");return;}setNotifications(prev=>[{id:Date.now().toString(),type:"thanks",text:`「${post.text.slice(0,20)}…」のGoodJobに感謝を送りました 🙏`,timestamp:Date.now(),read:false},...prev].slice(0,30));showToast(`🙏 ${givers}人に感謝を伝えました！`);};
+  const handleThanks=postId=>{
+    const post=posts.find(p=>p.id===postId);
+    if(!post||post.userId!==currentUser)return;
+    const helpers=(post.helpedBy||[]).length;
+    if(helpers===0){showToast("まだ「助かった」がありません");return;}
+    setNotifications(prev=>[{
+      id:Date.now().toString(),type:"thanks",
+      text:`「${post.text.slice(0,20)}…」の「助かった」に感謝を送りました 🙏`,
+      timestamp:Date.now(),read:false
+    },...prev].slice(0,30));
+    showToast(`🙏 ${helpers}人に感謝を伝えました！`);
+  };
   const handleClearTrajectory=()=>{clearTrajectory();showToast("軌跡をリセットしました");};
   const handlePwaInstall=async()=>{if(!pwaPrompt)return;pwaPrompt.prompt();const{outcome}=await pwaPrompt.userChoice;if(outcome==="accepted"){setPwaPrompt(null);showToast("📱 インストールしました！");}};
   const handlePin=id=>{setPinnedIds(prev=>prev.includes(id)?prev.filter(p=>p!==id):[...prev,id]);showToast(pinnedIds.includes(id)?"ピン留めを解除しました":"📌 ピン留めしました");};
@@ -445,14 +459,10 @@ export default function App(){
   const handleDeletePosts=async(ids)=>{try{await Promise.all(ids.map(id=>deleteDoc(doc(db,"posts",id))));showToast(`🗑️ ${ids.length}件を削除しました`);}catch(e){showToast(getFirestoreError(e),"error");}};
 
   const visiblePosts=posts.filter(p=>!p.hidden&&(!p.expiresAt||p.expiresAt>Date.now()));
-  const totalLikes=myPosts.reduce((s,p)=>s+p.likes,0);
+  const mapPosts=expandPostsForMap(visiblePosts);
   const recentInRadius=visiblePosts.filter(p=>userPosition&&getDistance(userPosition[0],userPosition[1],p.lat,p.lng)<=radius&&Date.now()-p.timestamp<86400000);
   const activeUsers=new Set(recentInRadius.filter(p=>p.userId!==currentUser).map(p=>p.userId)).size;
   const chainPost=chainPostId?posts.find(p=>p.id===chainPostId):null;
-  const nearTotal=visiblePosts.filter(p=>userPosition&&getDistance(userPosition[0],userPosition[1],p.lat,p.lng)<=POST_RADIUS).length;
-  const currentGoal=COMMUNITY_GOALS.find(g=>nearTotal<g.target)||COMMUNITY_GOALS[COMMUNITY_GOALS.length-1];
-  const prevGoalTarget=COMMUNITY_GOALS[COMMUNITY_GOALS.indexOf(currentGoal)-1]?.target||0;
-  const goalProgress=Math.min(100,((nearTotal-prevGoalTarget)/(currentGoal.target-prevGoalTarget))*100);
   const newPostCount=visiblePosts.filter(p=>!seenIds.includes(p.id)).length;
   const storageKB=getStorageUsageKB();
 
@@ -463,8 +473,8 @@ export default function App(){
         <style>{`@keyframes spin{to{transform:rotate(360deg)}}@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}`}</style>
         <div style={{animation:"fadeUp .5s ease",textAlign:"center"}}>
           <div style={{fontSize:56,marginBottom:12}}>🗺️</div>
-          <div style={{fontSize:20,fontWeight:900,color:"#f1f5f9",marginBottom:4,letterSpacing:"0.04em"}}>善意マップ</div>
-          <div style={{fontSize:12,color:"#7a8ea6",letterSpacing:"0.08em",marginBottom:24}}>街のいい瞬間を、地図に残そう</div>
+          <div style={{fontSize:20,fontWeight:900,color:"#f1f5f9",marginBottom:4,letterSpacing:"0.04em"}}>VIALE</div>
+          <div style={{fontSize:12,color:"#7a8ea6",letterSpacing:"0.08em",marginBottom:24}}>近くの助かりを、地図に残そう</div>
           <div style={{width:32,height:32,border:"2.5px solid rgba(59,130,246,0.2)",borderTopColor:"#3b82f6",borderRadius:"50%",animation:"spin 0.8s linear infinite",margin:"0 auto"}}/>
         </div>
       </div>
@@ -475,19 +485,17 @@ export default function App(){
     activeTab,setActiveTab,radius,setRadius,posts:visiblePosts,currentUser,userPosition,searchText,setSearchText,sortMode,setSortMode,
     onGoodJob:handleGoodJob,onDelete:handleDelete,onReport:handleReport,onEdit:setEditingId,editingId,onEditSave:handleEditSave,onShare:handleShare,onReaction:handleReaction,onBookmark:handleBookmark,bookmarks,onComment:handleComment,onDeleteComment:handleDeleteComment,
     onStartPost:()=>{setIsPosting(true);setPostPhase("form");if(isMobile)setShowSidebar(false);},
-    isFrozen,myPostsCount:myPosts.length,contributionScore,totalLikes,unreadCount,
+    isFrozen,myPostsCount:myPosts.length,unreadCount,
     onShowNotif:()=>{setShowNotif(true);markAllRead();},
-    isDark,setIsDark,T,nickname,onEditNick:()=>setShowNickEdit(true),myPosts,streak,missionsDone,onChain:handleChain,onThanks:handleThanks,activeUsers,
+    isDark,setIsDark,T,nickname,onEditNick:()=>setShowNickEdit(true),onChain:handleChain,onThanks:handleThanks,activeUsers,
     isTracking,setIsTracking,todayDist,totalDist,trajectoryCount:trajectory.length,onClearTrajectory:handleClearTrajectory,
-    currentChallenge,isChallengeCleared,earnedBadges,postRadius:POST_RADIUS,
-    highlightMine,setHighlightMine,onShowDigest:()=>setShowDigest(true),pwaPrompt,onPwaInstall:handlePwaInstall,
-    nearTotal,currentGoal,goalProgress,prevGoalTarget,lastPostId:lastPostIdRef.current,gpsError,
+    highlightMine,setHighlightMine,pwaPrompt,onPwaInstall:handlePwaInstall,
+    lastPostId:lastPostIdRef.current,gpsError,
     pinnedIds,onPin:handlePin,newPostCount,seenIds,
     onShowStorage:()=>setShowStorage(true),storageKB,
     mood,onMood:handleMood,
     onShowTutorial:()=>setShowTutorial(true),
-    dailyQuote:getDailyQuote(),
-    allPosts:posts,postsLoading,totalPostsInArea:nearTotal,
+    allPosts:posts,postsLoading,
     onHelped:handleHelped,
     onShowTerms:()=>setShowTerms(true),
     onShowGuide:()=>setShowGuide(true),
@@ -495,8 +503,12 @@ export default function App(){
     profileBio,onEditBio:()=>setShowBioEdit(true),
     profileMyTags,onEditMyTags:()=>setShowTagsEdit(true),
     profileHeaderColor,onEditHeaderColor:()=>setShowHeaderEdit(true),
-    profileAvatarEmoji,onEditAvatarEmoji:()=>setShowAvatarEdit(true),
+    profileAvatarEmoji,profileAvatarPhoto,onEditAvatar:()=>setShowAvatarEdit(true),
     profilePinnedPostId,onSetPinnedPost:(id)=>setProfilePinnedPostId(prev=>prev===id?"":id),
+    trajectoryHistory,trajectoryCount,showTrajectoryOnMap,onToggleTrajectoryMap:()=>setShowTrajectoryOnMap(v=>!v),onShowTrajectoryHistory:()=>setShowTrajectoryHistory(true),
+    onOpenGroupPanel:()=>setShowGroupPanel(true),
+    onOpenLocationSettings:()=>setShowLocationSettings(true),
+    gpsPermissionStatus: gpsError,
   };
 
   return(
@@ -508,8 +520,7 @@ export default function App(){
         input::placeholder,textarea::placeholder{color:${isDark?"#7a8ea6":"#94a3b8"};}
         @keyframes slideDown{from{opacity:0;transform:translateX(-50%) translateY(-16px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
         @keyframes bannerIn{from{opacity:0;transform:translateX(-50%) translateY(-12px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
-        @keyframes rankUpAnim{0%{opacity:0;transform:translate(-50%,-50%) scale(0.6)}15%{opacity:1;transform:translate(-50%,-50%) scale(1.1)}85%{opacity:1;transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(-50%,-50%) scale(0.95)}}
-        @keyframes pulseGlow{0%,100%{opacity:1}50%{opacity:0.6}}
+@keyframes pulseGlow{0%,100%{opacity:1}50%{opacity:0.6}}
         @keyframes notifSlide{from{opacity:0;transform:translateX(30px)}to{opacity:1;transform:translateX(0)}}
         @keyframes fadeScaleIn{from{opacity:0;transform:scale(0.94)}to{opacity:1;transform:scale(1)}}
         @keyframes mobileSlideUp{from{opacity:0;transform:translateY(100%)}to{opacity:1;transform:translateY(0)}}
@@ -520,9 +531,6 @@ export default function App(){
       {/* トースト */}
       {toast&&<div style={{position:"fixed",top:20,left:"50%",transform:"translateX(-50%)",color:"white",padding:"10px 24px",borderRadius:"999px",fontSize:"13px",fontWeight:"700",zIndex:9999,whiteSpace:"nowrap",background:toast.type==="error"?"linear-gradient(135deg,#ef4444,#dc2626)":"linear-gradient(135deg,#059669,#10b981)",animation:"slideDown 0.3s cubic-bezier(0.34,1.56,0.64,1)",boxShadow:"0 6px 32px rgba(0,0,0,0.3)"}}>{toast.msg}</div>}
 
-      {/* ランクアップ */}
-      {rankUp&&<div style={{position:"fixed",top:"50%",left:"50%",zIndex:10000,animation:"rankUpAnim 4s ease forwards",pointerEvents:"none"}}><div style={{background:isDark?"rgba(5,8,16,0.98)":"rgba(255,255,255,0.98)",border:`2px solid ${rankUp.color}55`,borderRadius:32,padding:"44px 72px",textAlign:"center",backdropFilter:"blur(32px)"}}><div style={{fontSize:56,marginBottom:12}}>🎉</div><div style={{color:T.muted,fontSize:10,letterSpacing:"0.25em",marginBottom:6}}>RANK UP</div><div style={{color:rankUp.color,fontSize:26,fontWeight:900}}>{rankUp.label}</div></div></div>}
-
       {/* 新着バナー */}
       {newBannerCount>0&&activeTab==="feed"&&!isPosting&&(
         <div onClick={()=>{setActiveTab("feed");setNewBannerCount(0);}} style={{position:"fixed",top:56,left:"50%",transform:"translateX(-50%)",zIndex:2500,background:"#2563eb",color:"white",padding:"8px 20px",borderRadius:"999px",fontSize:12,fontWeight:700,cursor:"pointer",animation:"bannerIn 0.3s ease",boxShadow:"0 4px 24px rgba(37,99,235,0.4)",display:"flex",alignItems:"center",gap:8,whiteSpace:"nowrap"}}>
@@ -532,15 +540,40 @@ export default function App(){
       )}
 
       {/* GPSエラーバー */}
-      {gpsError&&<div style={{position:"fixed",top:0,left:0,right:0,zIndex:8500,padding:"10px 20px",background:"rgba(245,158,11,0.95)",backdropFilter:"blur(12px)",display:"flex",alignItems:"center",gap:10,justifyContent:"center"}}><span style={{fontSize:13,fontWeight:700,color:"white"}}>{gpsError==="permission"?"📍 位置情報の許可が必要です":gpsError==="unavailable"?"📍 位置情報を取得できません":"📍 位置情報タイムアウト"}</span><button style={{background:"rgba(255,255,255,0.2)",border:"1px solid rgba(255,255,255,0.4)",borderRadius:999,padding:"3px 12px",color:"white",fontSize:11,cursor:"pointer"}} onClick={()=>setGpsError(null)}>×</button></div>}
+      {gpsError&&(
+        <div style={{position:"fixed",top:0,left:0,right:0,zIndex:8500,padding:"10px 20px",background:"rgba(245,158,11,0.95)",backdropFilter:"blur(12px)",display:"flex",alignItems:"center",gap:10,justifyContent:"center"}}>
+          <span style={{fontSize:13,fontWeight:700,color:"white"}}>
+            {gpsError==="位置情報の許可が必要です"||gpsError==="permission"?"📍 位置情報の許可が必要です":gpsError==="unavailable"?"📍 位置情報を取得できません":"📍 "+gpsError}
+          </span>
+          <button style={{background:"rgba(255,255,255,0.25)",border:"1px solid rgba(255,255,255,0.4)",borderRadius:999,padding:"3px 12px",color:"white",fontSize:11,cursor:"pointer",fontWeight:700}} onClick={()=>setShowLocationSettings(true)}>設定を開く</button>
+          <button style={{background:"rgba(255,255,255,0.2)",border:"1px solid rgba(255,255,255,0.4)",borderRadius:999,padding:"3px 10px",color:"white",fontSize:11,cursor:"pointer"}} onClick={()=>setGpsError(null)}>×</button>
+        </div>
+      )}
 
       {/* ストレージ警告 */}
       {storageWarning&&<div style={{position:"fixed",top:gpsError?46:0,left:0,right:0,zIndex:8400,padding:"10px 20px",background:"rgba(239,68,68,0.95)",backdropFilter:"blur(12px)",display:"flex",alignItems:"center",gap:10,justifyContent:"center"}}><span style={{fontSize:13,fontWeight:700,color:"white"}}>⚠️ ストレージが残り少なくなっています</span><button style={{background:"rgba(255,255,255,0.25)",border:"1px solid rgba(255,255,255,0.4)",borderRadius:999,padding:"3px 14px",color:"white",fontSize:11,cursor:"pointer",fontWeight:700}} onClick={()=>{setShowStorage(true);setStorageWarning(false);}}>管理する</button><button style={{background:"transparent",border:"none",color:"white",fontSize:16,cursor:"pointer",marginLeft:4}} onClick={()=>setStorageWarning(false)}>×</button></div>}
 
+      {/* グループパネル */}
+      {showGroupPanel&&(
+        <GroupPanel
+          currentUser={currentUser} isDark={isDark} T={T} isMobile={isMobile}
+          myGroups={myGroups} groupsLoading={groupsLoading}
+          activeGroupId={activeGroupId} setActiveGroupId={setActiveGroupId}
+          activeGroupData={activeGroupData} groupPosts={groupPosts} groupPostsLoading={groupPostsLoading}
+          isAdmin={isGroupAdmin}
+          onCreateGroup={createGroup} onJoinGroup={joinByInviteCode} onLeaveGroup={leaveGroup}
+          onAddGroupPost={addGroupPost} onDeleteGroupPost={deleteGroupPost}
+          onRegenerateInviteCode={regenerateInviteCode} onUpdateSettings={updateGroupSettings}
+          onClose={()=>setShowGroupPanel(false)}
+        />
+      )}
+
+      {/* 位置情報設定モーダル */}
+      {showLocationSettings&&<LocationSettingsModal isDark={isDark} T={T} onClose={()=>setShowLocationSettings(false)} isTracking={isTracking} setIsTracking={setIsTracking} gpsError={gpsError} setGpsError={setGpsError}/>}
+
       {/* モーダル */}
       {showTutorial&&<TutorialOverlay isDark={isDark} T={T} onClose={()=>{setShowTutorial(false);localStorage.setItem("zenTutorialDone","1");}}/>}
-      {showDigest&&<DigestModal posts={visiblePosts} currentUser={currentUser} isDark={isDark} T={T} onClose={()=>setShowDigest(false)}/>}
-      {showStorage&&<StorageModal posts={posts} onDeletePosts={handleDeletePosts} currentUser={currentUser} isDark={isDark} T={T} onClose={()=>setShowStorage(false)} storageKB={storageKB} onToast={showToast}/>}
+{showStorage&&<StorageModal posts={posts} onDeletePosts={handleDeletePosts} currentUser={currentUser} isDark={isDark} T={T} onClose={()=>setShowStorage(false)}/>}
       {showTerms&&<TermsModal isDark={isDark} T={T} onClose={()=>setShowTerms(false)}/>}
       {showGuide&&<GuideModal isDark={isDark} T={T} onClose={()=>setShowGuide(false)}/>}
 
@@ -704,19 +737,31 @@ export default function App(){
       )}
 
       {/* アバター編集 */}
-      {showAvatarEdit&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",zIndex:8000,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(12px)"}} onClick={()=>setShowAvatarEdit(false)}>
-          <div style={{background:isDark?"rgba(6,10,20,0.99)":"#fff",border:`1px solid ${T.border}`,borderRadius:24,padding:"28px 32px",width:340,animation:"fadeScaleIn 0.2s ease"}} onClick={e=>e.stopPropagation()}>
-            <div style={{fontSize:15,fontWeight:900,color:T.text,marginBottom:16}}>アバター</div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:8,marginBottom:20}}>
-              {["🚶","🏃","🌳","🗺️","☕","🌙","🌸","🏙️","🌊","📍","🎒","🔭","🌿","⛩️","🌃","🚲","🐕","🎵","📷","🍜","🌺","⭐","🦋","🏞️"].map(e=>(
-                <button key={e} onClick={()=>setProfileAvatarEmoji(e)} style={{fontSize:24,background:profileAvatarEmoji===e?(isDark?"rgba(59,130,246,.2)":"rgba(37,99,235,.1)"):"transparent",border:`2px solid ${profileAvatarEmoji===e?"#3b82f6":"transparent"}`,borderRadius:12,padding:"8px 0",cursor:"pointer",transform:profileAvatarEmoji===e?"scale(1.15)":"scale(1)",transition:"transform .1s"}}>{e}</button>
-              ))}
-            </div>
-            <button style={{width:"100%",padding:"11px 0",background:"linear-gradient(135deg,#2563eb,#7c3aed)",color:"white",border:"none",borderRadius:12,fontSize:13,fontWeight:800,cursor:"pointer"}} onClick={()=>{setShowAvatarEdit(false);showToast("アバターを変更しました");}}>完了</button>
-          </div>
-        </div>
-      )}
+      <ProfileAvatarEditor
+        open={showAvatarEdit}
+        onClose={()=>setShowAvatarEdit(false)}
+        isDark={isDark}
+        T={T}
+        profileAvatarEmoji={profileAvatarEmoji}
+        setProfileAvatarEmoji={setProfileAvatarEmoji}
+        profileAvatarPhoto={profileAvatarPhoto}
+        setProfileAvatarPhoto={setProfileAvatarPhoto}
+        compressImage={compressImage}
+        showToast={showToast}
+      />
+
+      <TrajectoryHistoryModal
+        open={showTrajectoryHistory}
+        onClose={()=>setShowTrajectoryHistory(false)}
+        points={trajectoryHistory}
+        todayDist={todayDist}
+        totalDist={totalDist}
+        isDark={isDark}
+        T={T}
+        showOnMap={showTrajectoryOnMap}
+        onToggleShowOnMap={()=>setShowTrajectoryOnMap(v=>!v)}
+        onClear={()=>{clearTrajectory();showToast("軌跡をリセットしました");}}
+      />
 
       {/* 通知パネル */}
       {showNotif&&(
@@ -762,14 +807,14 @@ export default function App(){
       {/* マップエリア */}
       <div style={{flex:1,position:"relative",overflow:"hidden"}}>
         <MapView
-          posts={visiblePosts} onMapClick={handleMapClick}
+          posts={mapPosts} onMapClick={handleMapClick}
           onReport={handleReport} onDelete={handleDelete}
           onGoodJob={handleGoodJob} onHelped={handleHelped}
           onEdit={setEditingId} editingId={editingId} onEditSave={handleEditSave}
           onShare={handleShare} onReaction={handleReaction}
           onBookmark={handleBookmark} bookmarks={bookmarks}
           onComment={handleComment} onDeleteComment={handleDeleteComment}
-          currentUser={currentUser} userPosition={userPosition}
+          currentUser={currentUser} userPosition={userPosition} userAccuracy={userAccuracy}
           radius={radius} postRadius={POST_RADIUS}
           isPosting={isPosting&&postPhase==="picking"}
           isDark={isDark} T={T}
@@ -788,6 +833,9 @@ export default function App(){
               onClick={()=>{setIsPosting(true);setPostPhase("form");}}>
               投稿
             </button>
+            <button style={{width:54,height:54,borderRadius:14,background:isDark?"rgba(10,14,26,0.92)":"rgba(255,255,255,0.95)",border:`1px solid ${T.border}`,cursor:"pointer",fontSize:18,backdropFilter:"blur(12px)",flexShrink:0}} onClick={()=>setShowGroupPanel(true)} title="グループ">
+              👥
+            </button>
             <button style={{width:54,height:54,borderRadius:14,background:isDark?"rgba(10,14,26,0.92)":"rgba(255,255,255,0.95)",border:`1px solid ${T.border}`,cursor:"pointer",fontSize:20,backdropFilter:"blur(12px)",position:"relative",flexShrink:0}} onClick={()=>setShowSidebar(true)}>
               ☰
               {newPostCount>0&&<div style={{position:"absolute",top:-4,right:-4,width:17,height:17,background:"#ef4444",borderRadius:"50%",fontSize:9,color:"white",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,border:"2px solid "+T.bg}}>{Math.min(newPostCount,99)}</div>}
@@ -802,7 +850,7 @@ export default function App(){
               <>
                 <div style={{position:"absolute",top:gpsError?52:16,left:"50%",transform:"translateX(-50%)",background:isDark?"rgba(5,8,16,.97)":"rgba(255,255,255,.98)",color:isDark?"#f8fafc":"#0f172a",padding:"11px 24px",borderRadius:"999px",fontSize:13,fontWeight:800,zIndex:1100,display:"flex",gap:10,alignItems:"center",border:"1.5px solid rgba(59,130,246,.5)",backdropFilter:"blur(20px)",animation:"pulseGlow 2s infinite",whiteSpace:"nowrap",boxShadow:"0 4px 24px rgba(37,99,235,.2)"}}>
                   <span style={{width:9,height:9,background:"#3b82f6",borderRadius:"50%",display:"inline-block",flexShrink:0}}/>
-                  <span>地図をタップして場所を決める</span>
+                  <span>地図をタップして地点を追加（複数可）</span>
                 </div>
                 <div style={{position:"absolute",bottom:0,left:0,right:0,background:isDark?"rgba(5,8,16,.98)":"rgba(255,255,255,.99)",borderRadius:"20px 20px 0 0",borderTop:"2px solid #3b82f6",border:`1px solid ${T.border}`,borderBottom:"none",backdropFilter:"blur(28px)",zIndex:1100,padding:"14px 18px 32px",animation:"previewIn .3s cubic-bezier(.34,1.56,.64,1)"}}>
                   <div style={{width:36,height:4,background:T.border,borderRadius:2,margin:"0 auto 14px"}}/>
@@ -814,8 +862,20 @@ export default function App(){
                       {postText.slice(0,80)}{postText.length>80?"…":""}
                     </div>
                     {postPhoto&&<div style={{marginTop:6,fontSize:11,color:T.muted}}>📷 写真あり</div>}
+                    <div style={{marginTop:10,padding:"9px 10px",background:isDark?"rgba(59,130,246,0.09)":"rgba(37,99,235,0.06)",border:"1px solid rgba(59,130,246,0.18)",borderRadius:10}}>
+                      <div style={{fontSize:11,fontWeight:800,color:"#3b82f6",marginBottom:6}}>選択した地点 {selectedLocations.length}件</div>
+                      {selectedLocations.length===0?
+                        <div style={{fontSize:11,color:T.muted}}>まだ地点が選ばれていません</div>:
+                        <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:120,overflowY:"auto"}}>{selectedLocations.map((loc,index)=>(
+                          <div key={loc.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:8,padding:"6px 8px",background:T.card,border:`1px solid ${T.border}`,borderRadius:8}}>
+                            <div style={{fontSize:11,color:T.sub}}>地点{index+1} · {loc.lat.toFixed(5)}, {loc.lng.toFixed(5)}</div>
+                            <button onClick={()=>handleRemoveSelectedLocation(loc.id)} style={{background:"transparent",border:"none",color:"#ef4444",cursor:"pointer",fontSize:12}}>削除</button>
+                          </div>
+                        ))}</div>}
+                    </div>
                   </div>
-                  <div style={{display:"flex",gap:8}}>
+                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    <button onClick={savePostWithSelectedLocations} style={{flex:1,padding:"13px 0",background:selectedLocations.length>0?"linear-gradient(135deg,#2563eb,#7c3aed)":"transparent",border:`1px solid ${selectedLocations.length>0?"#2563eb":T.border}`,borderRadius:12,cursor:selectedLocations.length>0?"pointer":"not-allowed",color:selectedLocations.length>0?"white":T.muted,fontSize:14,fontWeight:800}}>投稿する</button>
                     <button onClick={()=>setPostPhase("form")} style={{flex:1,padding:"13px 0",background:"transparent",border:`1px solid ${T.border}`,borderRadius:12,cursor:"pointer",color:T.sub,fontSize:14,fontWeight:700}}>✏️ 内容を編集</button>
                     <button onClick={resetForm} style={{padding:"13px 20px",background:"transparent",border:"1px solid rgba(239,68,68,.35)",borderRadius:12,cursor:"pointer",color:"#ef4444",fontSize:14,fontWeight:700}}>キャンセル</button>
                   </div>
@@ -834,7 +894,7 @@ export default function App(){
               postNeedTags={postNeedTags} setPostNeedTags={setPostNeedTags}
               chainPost={chainPost} isDark={isDark} T={T}
               canPost={canPost} userPosition={userPosition}
-              onConfirm={()=>setPostPhase("picking")} onCancel={resetForm}
+              onConfirm={()=>{setSelectedLocations([]);setPostPhase("picking");}} onCancel={resetForm}
             />
           );
         })()}
@@ -853,16 +913,18 @@ function OpeningScreen({isDark,T,onClose,onShowTerms}){
   useEffect(()=>{const t=setTimeout(()=>setStep(1),60);return()=>clearTimeout(t);},[]);
   // A: 言葉を街づくり寄りに。「善意」連呼をしない
   const actions=[
-    {emoji:"📍",title:"今いる場所に記録する",desc:"現在地から1km以内の場所にピンを置ける。その日、その場所で起きたことを残す。"},
-    {emoji:"✨",title:"他の人の投稿に共感する",desc:"GoodJobを送ったり「助かった！」と伝えたり。小さな反応が、次の記録につながる。"},
-    {emoji:"🗺️",title:"近くの記録を見つける",desc:"地図を見ると、今日この街でどんなことがあったかが分かる。"},
+    {emoji:"📍",title:"近くの助かりを記録する",desc:"ベンチ・トイレ・日陰・休憩できる場所など、誰かの役に立つ情報を残せる。"},
+    {emoji:"🔍",title:"近くで役立つ場所を探す",desc:"今いる場所の周りで、何が助かるかを探せる。目的地が決まれば地図で見られる。"},
+    {emoji:"🙏",title:"助かったと伝える",desc:"記録を見て実際に役立ったら「助かった」を押せる。それがまた次の記録につながる。"},
   ];
   return(
     <div style={{position:"fixed",inset:0,zIndex:20000,background:"rgba(3,5,12,0.99)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 20px",overflowY:"auto"}}>
       <div style={{opacity:step?1:0,transform:step?"translateY(0)":"translateY(18px)",transition:"all 0.6s cubic-bezier(0.34,1.56,0.64,1)",textAlign:"center",marginBottom:28,width:"100%",maxWidth:380}}>
         <div style={{fontSize:52,marginBottom:10}}>🗺️</div>
-        <div style={{fontSize:26,fontWeight:900,color:"#f1f5f9",marginBottom:6}}>善意マップ</div>
-        <div style={{fontSize:13,color:"#a8b8cc"}}>街のいい瞬間を、地図に残そう</div>
+        <div style={{fontSize:26,fontWeight:900,color:"#f1f5f9",marginBottom:6}}>VIALE</div>
+        <div style={{fontSize:13,color:"#a8b8cc",lineHeight:1.7}}>
+          近くの助かる場所・役立つ情報を<br/>みんなで地図に残していくアプリです
+        </div>
       </div>
       <div style={{opacity:step?1:0,transform:step?"translateY(0)":"translateY(14px)",transition:"all 0.6s 0.1s cubic-bezier(0.34,1.56,0.64,1)",display:"flex",flexDirection:"column",gap:8,width:"100%",maxWidth:380,marginBottom:28}}>
         {actions.map((a,i)=>(
@@ -876,8 +938,13 @@ function OpeningScreen({isDark,T,onClose,onShowTerms}){
         ))}
       </div>
       <div style={{opacity:step?1:0,transform:step?"translateY(0)":"translateY(10px)",transition:"all 0.6s 0.2s cubic-bezier(0.34,1.56,0.64,1)",width:"100%",maxWidth:380}}>
-        <button style={{width:"100%",padding:"15px 0",background:"linear-gradient(135deg,#2563eb,#7c3aed)",border:"none",borderRadius:16,color:"white",fontSize:15,fontWeight:900,cursor:"pointer",boxShadow:"0 8px 32px rgba(37,99,235,0.35)",marginBottom:12}} onClick={onClose}>はじめる</button>
-        <div style={{fontSize:10,color:"#5a6a80",textAlign:"center"}}>
+        <button style={{width:"100%",padding:"15px 0",background:"linear-gradient(135deg,#2563eb,#7c3aed)",border:"none",borderRadius:16,color:"white",fontSize:15,fontWeight:900,cursor:"pointer",boxShadow:"0 8px 32px rgba(37,99,235,0.35)",marginBottom:12}} onClick={onClose}>
+          はじめる
+        </button>
+        <div style={{fontSize:11,color:"#5a6a80",textAlign:"center"}}>
+          投稿しなくても、探すだけでも使えます
+        </div>
+        <div style={{fontSize:10,color:"#3a4a5c",textAlign:"center",marginTop:6}}>
           続けることで<button style={{background:"none",border:"none",color:"#7a8ea6",fontSize:10,cursor:"pointer",textDecoration:"underline",padding:"0 3px"}} onClick={e=>{e.stopPropagation();onShowTerms();}}>利用規約</button>に同意したものとみなします
         </div>
       </div>
@@ -1020,103 +1087,9 @@ function TutorialOverlay({isDark,T,onClose}){
 }
 
 // ====================================================
-// ダイジェスト（助かった・記録中心）
-// ====================================================
-function DigestModal({posts,currentUser,isDark,T,onClose}){
-  const today=new Date().toDateString();
-  const todayPosts=posts.filter(p=>new Date(p.timestamp).toDateString()===today&&!p.hidden);
-  const myToday=todayPosts.filter(p=>p.userId===currentUser);
-  const totalHelpedToday=todayPosts.reduce((s,p)=>s+(p.helpedBy||[]).length,0);
-  const myHelpedToday=myToday.reduce((s,p)=>s+(p.helpedBy||[]).length,0);
-
-  // needTags 別の記録件数
-  const {NEED_TAGS}=(() => {
-    try { return {NEED_TAGS:[{id:"trash",label:"🗑️ ゴミ捨て"},{id:"toilet",label:"🚻 トイレ"},{id:"bench",label:"🪑 ベンチ"},{id:"rest",label:"☕ 休憩"},{id:"water",label:"💧 水場"},{id:"shade",label:"🌳 日陰"},{id:"shelter",label:"🏠 屋内避難"},{id:"barrier",label:"♿ バリアフリー"},{id:"kids",label:"👶 子ども向け"},{id:"night",label:"🌙 夜でも安心"}]}; }
-    catch { return {NEED_TAGS:[]}; }
-  })();
-  const needTagMap={};
-  todayPosts.forEach(p=>(p.needTags||[]).forEach(id=>{needTagMap[id]=(needTagMap[id]||0)+1;}));
-  const topNeedTags=Object.entries(needTagMap).sort((a,b)=>b[1]-a[1]).slice(0,4);
-
-  // 今日いちばん助かった記録
-  const mostHelped=[...todayPosts].sort((a,b)=>(b.helpedBy||[]).length-(a.helpedBy||[]).length)[0];
-
-  return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:9000,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(16px)"}} onClick={onClose}>
-      <div style={{background:isDark?"rgba(6,10,20,0.99)":"#fff",border:`1px solid ${T.border}`,borderRadius:24,padding:"24px",width:"min(360px,92vw)",animation:"fadeScaleIn 0.22s ease"}} onClick={e=>e.stopPropagation()}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
-          <div><div style={{fontSize:15,fontWeight:900,color:T.text}}>今日のまとめ</div><div style={{fontSize:11,color:T.muted,marginTop:2}}>{new Date().toLocaleDateString("ja-JP",{month:"long",day:"numeric"})}</div></div>
-          <button style={{fontSize:20,background:"transparent",border:"none",cursor:"pointer",color:T.muted,lineHeight:1}} onClick={onClose}>×</button>
-        </div>
-
-        {/* 主役: 助かった・記録 */}
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:14}}>
-          {[
-            {val:todayPosts.length, label:"今日の記録",  color:"#818cf8"},
-            {val:totalHelpedToday,  label:"助かった計",  color:"#f59e0b"},
-            {val:myToday.length,    label:"自分の記録",  color:"#10b981"},
-          ].map(({val,label,color})=>(
-            <div key={label} style={{background:T.card,border:`1px solid ${T.cardBorder}`,borderRadius:10,padding:"10px 4px",textAlign:"center"}}>
-              <div style={{fontSize:20,fontWeight:900,color,lineHeight:1}}>{val}</div>
-              <div style={{fontSize:9,color:T.muted,marginTop:3}}>{label}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* 自分の助かった */}
-        {myHelpedToday>0&&(
-          <div style={{padding:"10px 12px",background:isDark?"rgba(245,158,11,0.07)":"rgba(254,243,199,0.5)",border:"1px solid rgba(245,158,11,0.25)",borderRadius:11,marginBottom:10,display:"flex",alignItems:"center",gap:10}}>
-            <span style={{fontSize:24}}>🙏</span>
-            <div>
-              <div style={{fontSize:12,fontWeight:800,color:"#f59e0b"}}>今日 {myHelpedToday}人に助かったと伝わりました</div>
-              <div style={{fontSize:10,color:T.muted,marginTop:1}}>あなたの記録が役に立っています</div>
-            </div>
-          </div>
-        )}
-
-        {/* 今日いちばん助かった記録 */}
-        {mostHelped&&(mostHelped.helpedBy||[]).length>0&&(
-          <div style={{padding:"11px 12px",background:T.card,border:`1px solid ${T.cardBorder}`,borderRadius:11,marginBottom:10}}>
-            <div style={{fontSize:10,color:"#f59e0b",fontWeight:800,marginBottom:5}}>🔥 今日いちばん助かった記録</div>
-            <div style={{fontSize:12,color:T.sub,lineHeight:1.6}}>{mostHelped.text.slice(0,60)}{mostHelped.text.length>60?"…":""}</div>
-            <div style={{fontSize:10,color:T.muted,marginTop:4}}>🙏 {(mostHelped.helpedBy||[]).length}人 · 助かった</div>
-          </div>
-        )}
-
-        {/* needTags 別の記録傾向 */}
-        {topNeedTags.length>0&&(
-          <div style={{padding:"11px 12px",background:T.card,border:`1px solid ${T.cardBorder}`,borderRadius:11,marginBottom:10}}>
-            <div style={{fontSize:10,color:"#10b981",fontWeight:800,marginBottom:8}}>📍 今日よく残された場所タイプ</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-              {topNeedTags.map(([id,cnt])=>{
-                const tag=NEED_TAGS.find(t=>t.id===id);
-                return tag?(
-                  <div key={id} style={{display:"flex",alignItems:"center",gap:4,padding:"4px 9px",background:isDark?"rgba(16,185,129,0.08)":"rgba(209,250,229,0.5)",border:"1px solid rgba(16,185,129,0.2)",borderRadius:999}}>
-                    <span style={{fontSize:11}}>{tag.label}</span>
-                    <span style={{fontSize:10,color:T.muted}}>×{cnt}</span>
-                  </div>
-                ):null;
-              })}
-            </div>
-          </div>
-        )}
-
-        {todayPosts.length===0&&(
-          <div style={{textAlign:"center",padding:"28px 0",color:T.muted}}>
-            <div style={{fontSize:36,opacity:0.4}}>📍</div>
-            <div style={{marginTop:8,fontSize:13,color:T.sub}}>今日はまだ記録がありません</div>
-            <div style={{fontSize:11,color:T.muted,marginTop:4}}>近くで気づいたことを残してみましょう</div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ====================================================
 // ストレージ管理
 // ====================================================
-function StorageModal({posts,onDeletePosts,currentUser,isDark,T,onClose,storageKB,onToast}){
+function StorageModal({posts,onDeletePosts,currentUser,isDark,T,onClose}){
   const [selected,setSelected]=useState(new Set());
   const [filter,setFilter]=useState("old");
   const [deleting,setDeleting]=useState(false);
@@ -1158,6 +1131,138 @@ function StorageModal({posts,onDeletePosts,currentUser,isDark,T,onClose,storageK
         <button style={{width:"100%",padding:"11px 0",background:selected.size>0?"linear-gradient(135deg,#ef4444,#dc2626)":"transparent",border:`1px solid ${selected.size>0?"#ef4444":T.border}`,borderRadius:11,color:selected.size>0?"white":T.muted,fontSize:13,fontWeight:800,cursor:selected.size>0&&!deleting?"pointer":"not-allowed"}} onClick={handleDelete} disabled={selected.size===0||deleting}>
           {deleting?"削除中…":`${selected.size}件を削除する`}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// ====================================================
+// 位置情報設定モーダル
+// ====================================================
+function LocationSettingsModal({isDark,T,onClose,isTracking,setIsTracking,gpsError,setGpsError}){
+  const [permState,setPermState]=useState("unknown"); // "granted" | "denied" | "prompt" | "unknown"
+  const [requesting,setRequesting]=useState(false);
+
+  // 現在の権限状態を確認
+  useEffect(()=>{
+    if(!navigator.permissions){setPermState("unknown");return;}
+    navigator.permissions.query({name:"geolocation"}).then(result=>{
+      setPermState(result.state);
+      result.onchange=()=>setPermState(result.state);
+    }).catch(()=>setPermState("unknown"));
+  },[]);
+
+  // 許可リクエスト（ブラウザのダイアログを出す）
+  const handleRequest=async()=>{
+    if(!navigator.geolocation){return;}
+    setRequesting(true);
+    navigator.geolocation.getCurrentPosition(
+      ()=>{
+        setPermState("granted");
+        setGpsError(null);
+        setRequesting(false);
+      },
+      err=>{
+        if(err.code===1)setPermState("denied");
+        setRequesting(false);
+      },
+      {enableHighAccuracy:true,timeout:10000}
+    );
+  };
+
+  const stateLabel={
+    granted:{text:"許可済み",color:"#10b981",icon:"✓"},
+    denied: {text:"拒否済み",color:"#ef4444",icon:"✕"},
+    prompt: {text:"未設定",color:"#f59e0b",icon:"?"},
+    unknown:{text:"確認中",color:T.muted,icon:"…"},
+  }[permState]||{text:"不明",color:T.muted,icon:"?"};
+
+  // ブラウザ別の手順テキスト
+  const ua=navigator.userAgent;
+  const isChrome=/Chrome/.test(ua)&&!/Edg/.test(ua);
+  const isFirefox=/Firefox/.test(ua);
+  const isSafari=/Safari/.test(ua)&&!/Chrome/.test(ua);
+  const browserGuide=isChrome
+    ?"アドレスバー左の 🔒 → 「位置情報」→「許可」"
+    :isFirefox
+    ?"アドレスバー左の盾アイコン → 「許可」"
+    :isSafari
+    ?"Safari設定 → このサイト → 位置情報「許可」"
+    :"ブラウザのアドレスバー付近の設定から「位置情報」を許可";
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",zIndex:12000,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(16px)",padding:16}} onClick={onClose}>
+      <div style={{background:isDark?"rgba(6,10,20,0.99)":"#fff",border:`1px solid ${T.border}`,borderRadius:24,width:"min(380px,95vw)",animation:"fadeScaleIn 0.22s ease",overflow:"hidden"}} onClick={e=>e.stopPropagation()}>
+        {/* ヘッダー */}
+        <div style={{padding:"20px 22px 14px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <div>
+            <div style={{fontSize:16,fontWeight:900,color:T.text}}>位置情報の設定</div>
+            <div style={{fontSize:11,color:T.muted,marginTop:2}}>記録・投稿に必要です</div>
+          </div>
+          <button style={{background:"transparent",border:"none",color:T.muted,fontSize:22,cursor:"pointer",lineHeight:1}} onClick={onClose}>×</button>
+        </div>
+
+        <div style={{padding:"16px 22px 22px",display:"flex",flexDirection:"column",gap:14}}>
+          {/* 現在の権限状態 */}
+          <div style={{display:"flex",alignItems:"center",gap:12,padding:"13px 14px",background:T.card,border:`1px solid ${T.cardBorder}`,borderRadius:14}}>
+            <div style={{width:36,height:36,borderRadius:12,background:`${stateLabel.color}18`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,fontWeight:900,color:stateLabel.color,flexShrink:0}}>
+              {stateLabel.icon}
+            </div>
+            <div>
+              <div style={{fontSize:13,fontWeight:800,color:T.text}}>現在の状態</div>
+              <div style={{fontSize:12,color:stateLabel.color,fontWeight:700,marginTop:1}}>{stateLabel.text}</div>
+            </div>
+          </div>
+
+          {/* 許可されていない場合の案内 */}
+          {permState==="denied"&&(
+            <div style={{padding:"12px 14px",background:isDark?"rgba(239,68,68,0.07)":"rgba(254,226,226,0.4)",border:"1px solid rgba(239,68,68,0.2)",borderRadius:12}}>
+              <div style={{fontSize:12,fontWeight:800,color:"#ef4444",marginBottom:6}}>ブラウザで手動で許可してください</div>
+              <div style={{fontSize:11,color:T.sub,lineHeight:1.8}}>{browserGuide}</div>
+            </div>
+          )}
+          {(permState==="prompt"||permState==="unknown")&&(
+            <div style={{padding:"12px 14px",background:isDark?"rgba(245,158,11,0.07)":"rgba(254,243,199,0.4)",border:"1px solid rgba(245,158,11,0.2)",borderRadius:12}}>
+              <div style={{fontSize:11,color:T.sub,lineHeight:1.8}}>ボタンを押すとブラウザの許可ダイアログが表示されます。「許可」を選んでください。</div>
+            </div>
+          )}
+          {permState==="granted"&&(
+            <div style={{padding:"12px 14px",background:isDark?"rgba(16,185,129,0.07)":"rgba(209,250,229,0.4)",border:"1px solid rgba(16,185,129,0.2)",borderRadius:12}}>
+              <div style={{fontSize:11,color:T.sub,lineHeight:1.8}}>位置情報は許可されています。軌跡の記録は下のトグルでON/OFFできます。</div>
+            </div>
+          )}
+
+          {/* 許可ボタン */}
+          {permState!=="granted"&&permState!=="denied"&&(
+            <button
+              onClick={handleRequest}
+              disabled={requesting}
+              style={{width:"100%",padding:"13px 0",background:requesting?"transparent":"linear-gradient(135deg,#2563eb,#7c3aed)",border:`1px solid ${requesting?T.border:"transparent"}`,borderRadius:12,color:requesting?T.muted:"white",fontSize:13,fontWeight:800,cursor:requesting?"not-allowed":"pointer"}}
+            >
+              {requesting?"確認中…":"📍 位置情報を許可する"}
+            </button>
+          )}
+
+          {/* 軌跡トラッキングON/OFF */}
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 14px",background:T.card,border:`1px solid ${T.cardBorder}`,borderRadius:14}}>
+            <div>
+              <div style={{fontSize:13,fontWeight:800,color:T.text}}>軌跡の記録</div>
+              <div style={{fontSize:11,color:T.muted,marginTop:2}}>移動距離・移動ルートを保存します</div>
+            </div>
+            <button
+              onClick={()=>setIsTracking(v=>!v)}
+              style={{width:48,height:28,borderRadius:999,background:isTracking?"#2563eb":"rgba(148,163,184,0.3)",border:"none",cursor:permState==="granted"?"pointer":"not-allowed",position:"relative",transition:"background .2s",flexShrink:0,opacity:permState==="granted"?1:0.5}}
+              disabled={permState!=="granted"}
+            >
+              <div style={{position:"absolute",top:3,left:isTracking?22:3,width:22,height:22,borderRadius:"50%",background:"white",transition:"left .2s",boxShadow:"0 1px 4px rgba(0,0,0,0.25)"}}/>
+            </button>
+          </div>
+
+          {/* 説明 */}
+          <div style={{fontSize:11,color:T.muted,lineHeight:1.8,padding:"0 2px"}}>
+            位置情報は投稿時の距離チェックと軌跡記録にのみ使います。外部に送信されることはありません。
+          </div>
+        </div>
       </div>
     </div>
   );

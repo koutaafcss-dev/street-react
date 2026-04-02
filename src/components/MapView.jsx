@@ -192,7 +192,7 @@ export default function MapView({
   onGoodJob,onHelped,onEdit,editingId,onEditSave,
   onShare,onReaction,onBookmark,bookmarks,
   onComment,onDeleteComment,
-  currentUser,userPosition,
+  currentUser,userPosition,userAccuracy,
   radius,postRadius,
   isPosting,isDark,T,
   postEffect,activeUsers,
@@ -249,6 +249,13 @@ export default function MapView({
         map.addLayer({id:"zen-buildings",source:bSrc,"source-layer":"building",type:"fill-extrusion",minzoom:14,paint:{"fill-extrusion-color":isDarkRef.current?"#1a2640":"#c8d4e8","fill-extrusion-height":["coalesce",["get","height"],5],"fill-extrusion-base":["coalesce",["get","min_height"],0],"fill-extrusion-opacity":0.75}});
       }
     }catch(e){console.warn("Buildings skipped:",e);}
+
+    // GPS精度サークル
+    if(!map.getSource("zen-accuracy")){
+      map.addSource("zen-accuracy",{type:"geojson",data:{type:"FeatureCollection",features:[]}});
+      map.addLayer({id:"zen-accuracy-fill",type:"fill",source:"zen-accuracy",paint:{"fill-color":"#3b82f6","fill-opacity":0.08}});
+      map.addLayer({id:"zen-accuracy-line",type:"line",source:"zen-accuracy",paint:{"line-color":"#3b82f6","line-width":1,"line-opacity":0.4,"line-dasharray":[4,4]}});
+    }
 
     // 投稿可能エリア
     if(!map.getSource("zen-radius")){
@@ -354,7 +361,12 @@ export default function MapView({
     }
     const src=map.getSource("zen-radius");
     if(src)src.setData(makeCircle(userPosition[0],userPosition[1],postRadius));
-  },[userPosition,mapReady,postRadius]);
+    // GPS精度サークル
+    const accSrc=map.getSource("zen-accuracy");
+    if(accSrc&&userAccuracy>0){
+      accSrc.setData(makeCircle(userPosition[0],userPosition[1],userAccuracy/1000));
+    }
+  },[userPosition,userAccuracy,mapReady,postRadius]);
 
   // ─── GPS軌跡 ───
   useEffect(()=>{

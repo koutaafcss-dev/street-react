@@ -1,0 +1,9 @@
+{
+  "name": "VIALE",
+  "short_name": "VIALE",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050810",
+  "theme_color": "#2563eb",
+  "icons": []
+}

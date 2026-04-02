@@ -1,146 +1,426 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { Preferences } from '@capacitor/preferences';
+import {
+  ensureNativeLocationPermission,
+  ensureBackgroundRunnerPermissions,
+  startNativeForegroundWatch,
+  stopNativeForegroundWatch,
+  readBackgroundPoints,
+  clearBackgroundPoints,
+} from './useNativeBackgroundLocation';
 
-// ─── 軌跡ユーティリティ ────────────────────────────────
-const TRAJECTORY_KEY = "zenTrajectory";
-const MAX_POINTS = 2000;
+const STORAGE_KEYS = {
+  lastPosition: 'viale_last_position',
+  points: 'viale_trajectory_points',
+  totalDist: 'viale_total_distance_km',
+  dayKey: 'viale_trajectory_day_key',
+  todayDist: 'viale_today_distance_km',
+  isTracking: 'viale_is_tracking',
+  showOnMap: 'viale_show_trajectory_on_map',
+  lastMilestone: 'viale_last_walk_milestone',
+};
 
-function loadTrajectory() {
-  try { return JSON.parse(localStorage.getItem(TRAJECTORY_KEY) || "[]"); }
-  catch { return []; }
+function safeParse(raw, fallback) {
+  try {
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
 }
-function saveTrajectory(pts) {
-  try { localStorage.setItem(TRAJECTORY_KEY, JSON.stringify(pts.slice(-MAX_POINTS))); }
-  catch { /* ストレージ満杯時は無視 */ }
+
+async function prefGetJson(key, fallback) {
+  const { value } = await Preferences.get({ key });
+  return safeParse(value, fallback);
 }
-function getDistance(lat1, lng1, lat2, lng2) {
-  const R = 6371, dLat = ((lat2 - lat1) * Math.PI) / 180, dLng = ((lng2 - lng1) * Math.PI) / 180;
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+
+async function prefSetJson(key, value) {
+  await Preferences.set({ key, value: JSON.stringify(value) });
+}
+
+async function prefGetNumber(key, fallback = 0) {
+  const { value } = await Preferences.get({ key });
+  const num = value == null ? fallback : Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+async function prefSetNumber(key, value) {
+  await Preferences.set({ key, value: String(value) });
+}
+
+async function prefGetBoolean(key, fallback = false) {
+  const { value } = await Preferences.get({ key });
+  if (value == null) return fallback;
+  return value === 'true';
+}
+
+async function prefSetBoolean(key, value) {
+  await Preferences.set({ key, value: value ? 'true' : 'false' });
+}
+
+function getTodayKey() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = `${now.getMonth() + 1}`.padStart(2, '0');
+  const d = `${now.getDate()}`.padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function getDistanceKm(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
-export function calcTotalDistance(pts) {
-  let d = 0;
-  for (let i = 1; i < pts.length; i++)
-    d += getDistance(pts[i - 1].lat, pts[i - 1].lng, pts[i].lat, pts[i].lng);
-  return d;
-}
-export function getTodayPts(pts) {
-  const t = new Date().toDateString();
-  return pts.filter(p => new Date(p.ts).toDateString() === t);
-}
 
-// デフォルト位置（名古屋）
-const DEFAULT_POS = [35.181236, 136.906505];
 
 /**
- * useGPS
- * - 現在地の取得（watchPosition / getCurrentPosition）
- * - 軌跡の記録（localStorage永続化）
- * - GPS エラー管理
- *
- * onWalkMilestone: 歩行距離が閾値を超えた時に呼ばれるコールバック
- * これによりミッション判定をApp.jsxに残せる（hook同士の依存を避ける）
+ * 簡易カルマンフィルタ
+ * GPS のノイズを平滑化する。
+ * 誤差（accuracy）が小さいほど新しい値を強く信頼する。
  */
-export function useGPS({ onWalkMilestone } = {}) {
+class GpsKalman {
+  constructor() {
+    this.lat = null;
+    this.lng = null;
+    this.variance = -1; // 未初期化
+  }
+  update(lat, lng, accuracyM) {
+    const q = Math.max(accuracyM, 1) ** 2; // 観測ノイズ
+    if (this.variance < 0) {
+      // 初回はそのまま採用
+      this.lat = lat;
+      this.lng = lng;
+      this.variance = q;
+      return { lat, lng };
+    }
+    const k = this.variance / (this.variance + q); // カルマンゲイン
+    this.lat = this.lat + k * (lat - this.lat);
+    this.lng = this.lng + k * (lng - this.lng);
+    this.variance = (1 - k) * this.variance;
+    return { lat: this.lat, lng: this.lng };
+  }
+}
+
+function getMilestoneLabel(totalKm) {
+  if (totalKm >= 10) return '10km';
+  if (totalKm >= 5) return '5km';
+  if (totalKm >= 3) return '3km';
+  if (totalKm >= 1) return '1km';
+  return null;
+}
+
+function normalizePoint(positionLike) {
+  if (!positionLike) return null;
+  if (typeof positionLike.lat === 'number' && typeof positionLike.lng === 'number') {
+    return {
+      lat: positionLike.lat,
+      lng: positionLike.lng,
+      accuracy: typeof positionLike.accuracy === 'number' ? positionLike.accuracy : null,
+      speed: typeof positionLike.speed === 'number' ? positionLike.speed : null,
+      timestamp: typeof positionLike.timestamp === 'number' ? positionLike.timestamp : Date.now(),
+      source: positionLike.source || 'app',
+    };
+  }
+  const coords = positionLike.coords;
+  if (!coords) return null;
+  return {
+    lat: coords.latitude,
+    lng: coords.longitude,
+    accuracy: typeof coords.accuracy === 'number' ? coords.accuracy : null,
+    speed: typeof coords.speed === 'number' ? coords.speed : null,
+    timestamp: typeof positionLike.timestamp === 'number' ? positionLike.timestamp : Date.now(),
+    source: 'web-foreground',
+  };
+}
+
+export function useGPS(options = {}) {
+  const { onWalkMilestone } = options;
+  const isNative = Capacitor.isNativePlatform();
+
+  const [gpsError, setGpsError] = useState('');
+  const [isTracking, setIsTracking] = useState(false);
+  const [showTrajectoryOnMap, setShowTrajectoryOnMap] = useState(false);
+  const [trajectoryHistory, setTrajectoryHistory] = useState([]);
   const [userPosition, setUserPosition] = useState(null);
-  const [gpsError, setGpsError] = useState(null);
-  const [isTracking, setIsTracking] = useState(
-    () => localStorage.getItem("zenTracking") === "true"
-  );
-  const [trajectory, setTrajectory] = useState(() => loadTrajectory());
+  const [userAccuracy, setUserAccuracy] = useState(null);
+  const [totalDist, setTotalDist] = useState(0);
+  const [todayDist, setTodayDist] = useState(0);
+
   const watchIdRef = useRef(null);
-  const lastPtRef = useRef(null);
-  const prevTodayDistRef = useRef(0);
+  const webWatchIdRef = useRef(null);
+  const lastMilestoneRef = useRef('');
+  const lastPointRef = useRef(null);
 
-  // ── 初回: 現在地を一度だけ取得（tracking=off でも表示用に必要）
   useEffect(() => {
-    if (!navigator.geolocation) {
-      setUserPosition(DEFAULT_POS);
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      pos => {
-        setUserPosition([pos.coords.latitude, pos.coords.longitude]);
-        setGpsError(null);
-      },
-      err => {
-        setGpsError(err.code === 1 ? "permission" : "unavailable");
-        setUserPosition(DEFAULT_POS);
+    let alive = true;
+    (async () => {
+      const savedDay = await Preferences.get({ key: STORAGE_KEYS.dayKey });
+      const currentDay = getTodayKey();
+      const points = await prefGetJson(STORAGE_KEYS.points, []);
+      const total = await prefGetNumber(STORAGE_KEYS.totalDist, 0);
+      const today = savedDay.value === currentDay ? await prefGetNumber(STORAGE_KEYS.todayDist, 0) : 0;
+      const last = await prefGetJson(STORAGE_KEYS.lastPosition, null);
+      const tracking = await prefGetBoolean(STORAGE_KEYS.isTracking, false);
+      const showOnMap = await prefGetBoolean(STORAGE_KEYS.showOnMap, false);
+      const lastMilestone = (await Preferences.get({ key: STORAGE_KEYS.lastMilestone })).value || '';
+
+      if (!alive) return;
+      setTrajectoryHistory(points);
+      setTotalDist(total);
+      setTodayDist(today);
+      setIsTracking(tracking);
+      setShowTrajectoryOnMap(showOnMap);
+      if (last && typeof last.lat === 'number' && typeof last.lng === 'number') {
+        setUserPosition([last.lat, last.lng]);
       }
-    );
-  }, []);
+      lastPointRef.current = points.length ? points[points.length - 1] : last;
+      lastMilestoneRef.current = lastMilestone;
+      await Preferences.set({ key: STORAGE_KEYS.dayKey, value: currentDay });
 
-  // ── tracking ON/OFF で watchPosition を制御
-  useEffect(() => {
-    localStorage.setItem("zenTracking", String(isTracking));
 
-    if (!isTracking) {
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-        watchIdRef.current = null;
-      }
-      return;
-    }
-    if (!navigator.geolocation) return;
-
-    watchIdRef.current = navigator.geolocation.watchPosition(
-      pos => {
-        const { latitude: lat, longitude: lng } = pos.coords;
-        // 5m 未満の微小移動は無視（バッテリー節約）
-        if (lastPtRef.current) {
-          const d = getDistance(lastPtRef.current.lat, lastPtRef.current.lng, lat, lng);
-          if (d < 0.005) return;
+      if (isNative) {
+        const bgPoints = await readBackgroundPoints();
+        if (bgPoints.length) {
+          setTrajectoryHistory((prev) => {
+            const merged = [...prev, ...bgPoints].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+            const deduped = [];
+            const seen = new Set();
+            for (const p of merged) {
+              const key = `${p.timestamp}-${p.lat}-${p.lng}`;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              deduped.push(p);
+            }
+            return deduped.slice(-2500);
+          });
         }
-        const pt = { lat, lng, ts: Date.now() };
-        lastPtRef.current = pt;
-        setTrajectory(prev => {
-          const next = [...prev, pt].slice(-MAX_POINTS);
-          saveTrajectory(next);
-          return next;
-        });
-        setUserPosition([lat, lng]);
-        setGpsError(null);
-      },
-      err => {
-        if (err.code === 1) setGpsError("permission");
-        else if (err.code === 2) setGpsError("unavailable");
-        else setGpsError("timeout");
-        setUserPosition(DEFAULT_POS);
-      },
-      { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 }
+      }
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [isNative]);
+
+  // 常時位置ウォッチ（軌跡記録ON/OFFに関わらず現在地マーカーを更新し続ける）
+  useEffect(() => {
+    if (isNative || !navigator.geolocation) return;
+
+    const kalman = new GpsKalman();
+    let watchId = null;
+    let cancelled = false;
+
+    const handlePosition = (pos) => {
+      if (cancelled) return;
+      const { latitude, longitude, accuracy } = pos.coords;
+      console.log('[GPS] position received:', { latitude, longitude, accuracy });
+      // 精度に関わらず表示用には採用（IPベースの粗い位置も使う）
+      const filtered = kalman.update(latitude, longitude, accuracy);
+      setUserPosition([filtered.lat, filtered.lng]);
+      setUserAccuracy(accuracy);
+      setGpsError('');
+    };
+
+    const handleError = (err) => {
+      if (cancelled) return;
+      if (err.code === 1) setGpsError('位置情報の許可が必要です');
+      else if (err.code === 2) setGpsError('現在地を取得できません');
+      // タイムアウト(code=3)は無視して watchPosition に任せる
+    };
+
+    // まず1回即時取得（キャッシュなし）→ GPS が精度を上げるにつれ watchPosition が追従
+    navigator.geolocation.getCurrentPosition(
+      handlePosition,
+      handleError,
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+    );
+
+    // 継続ウォッチ（GPSが衛星を捕捉するにつれ精度が上がっていく）
+    watchId = navigator.geolocation.watchPosition(
+      handlePosition,
+      handleError,
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 }
     );
 
     return () => {
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
+      cancelled = true;
+      if (watchId != null) navigator.geolocation.clearWatch(watchId);
+    };
+  }, [isNative]);
+
+  useEffect(() => {
+    prefSetBoolean(STORAGE_KEYS.isTracking, isTracking);
+  }, [isTracking]);
+
+  useEffect(() => {
+    prefSetBoolean(STORAGE_KEYS.showOnMap, showTrajectoryOnMap);
+  }, [showTrajectoryOnMap]);
+
+  useEffect(() => {
+    prefSetJson(STORAGE_KEYS.points, trajectoryHistory);
+    const last = trajectoryHistory.length ? trajectoryHistory[trajectoryHistory.length - 1] : null;
+    if (last) {
+      prefSetJson(STORAGE_KEYS.lastPosition, last);
+      setUserPosition([last.lat, last.lng]);
+    }
+    lastPointRef.current = last;
+  }, [trajectoryHistory]);
+
+  useEffect(() => {
+    prefSetNumber(STORAGE_KEYS.totalDist, totalDist);
+  }, [totalDist]);
+
+  useEffect(() => {
+    Preferences.set({ key: STORAGE_KEYS.dayKey, value: getTodayKey() });
+    prefSetNumber(STORAGE_KEYS.todayDist, todayDist);
+  }, [todayDist]);
+
+  const appendPoint = useCallback((rawPoint) => {
+    const point = normalizePoint(rawPoint);
+    if (!point) return;
+
+    setGpsError('');
+    setUserPosition([point.lat, point.lng]);
+    if (point.accuracy != null) setUserAccuracy(point.accuracy);
+
+    const prev = lastPointRef.current;
+    if (!prev) {
+      setTrajectoryHistory([point]);
+      lastPointRef.current = point;
+      return;
+    }
+
+    const movedKm = getDistanceKm(prev.lat, prev.lng, point.lat, point.lng);
+    if (movedKm < 0.003) return;
+    const shouldStorePoint = movedKm >= 0.008;
+
+    setTotalDist((prevTotal) => {
+      const nextTotal = prevTotal + movedKm;
+      const milestone = getMilestoneLabel(nextTotal);
+      if (milestone && milestone !== lastMilestoneRef.current) {
+        lastMilestoneRef.current = milestone;
+        Preferences.set({ key: STORAGE_KEYS.lastMilestone, value: milestone });
+        onWalkMilestone?.(milestone);
+      }
+      return nextTotal;
+    });
+
+    setTodayDist((prevToday) => prevToday + movedKm);
+
+    if (shouldStorePoint) {
+      setTrajectoryHistory((prevPoints) => [...prevPoints, point].slice(-2500));
+      lastPointRef.current = point;
+    }
+  }, [onWalkMilestone]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const start = async () => {
+      if (!isTracking) return;
+
+      try {
+        if (isNative) {
+          await ensureNativeLocationPermission();
+          await ensureBackgroundRunnerPermissions();
+          watchIdRef.current = await startNativeForegroundWatch((point) => {
+            if (!cancelled) appendPoint(point);
+          });
+          return;
+        }
+
+        if (!navigator.geolocation) {
+          setGpsError('この端末では位置情報が使えません');
+          return;
+        }
+
+        webWatchIdRef.current = navigator.geolocation.watchPosition(
+          (position) => !cancelled && appendPoint(position),
+          (error) => {
+            if (error?.code === 1) setGpsError('位置情報の許可が必要です');
+            else if (error?.code === 2) setGpsError('現在地を取得できません');
+            else if (error?.code === 3) setGpsError('位置情報の取得がタイムアウトしました');
+            else setGpsError('位置情報の取得に失敗しました');
+          },
+          { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 }
+        );
+      } catch (err) {
+        setGpsError(err?.message || '位置情報の開始に失敗しました');
+      }
+    };
+
+    start();
+
+    return () => {
+      cancelled = true;
+      if (webWatchIdRef.current != null && navigator.geolocation) {
+        navigator.geolocation.clearWatch(webWatchIdRef.current);
+        webWatchIdRef.current = null;
+      }
+      if (watchIdRef.current != null) {
+        stopNativeForegroundWatch(watchIdRef.current).catch(() => {});
         watchIdRef.current = null;
       }
     };
-  }, [isTracking]);
-
-  // ── 歩行距離のマイルストーン通知
-  const todayDist = calcTotalDistance(getTodayPts(trajectory));
-  const totalDist = calcTotalDistance(trajectory);
+  }, [appendPoint, isNative, isTracking]);
 
   useEffect(() => {
-    if (todayDist >= 1 && prevTodayDistRef.current < 1) {
-      onWalkMilestone?.("1km");
-    }
-    if (todayDist >= 5 && prevTodayDistRef.current < 5) {
-      onWalkMilestone?.("5km");
-    }
-    prevTodayDistRef.current = todayDist;
-  }, [todayDist]);
+    if (!isNative) return;
+    const onVisible = async () => {
+      if (document.visibilityState !== 'visible') return;
+      const bgPoints = await readBackgroundPoints();
+      if (!bgPoints.length) return;
+      setTrajectoryHistory((prev) => {
+        const merged = [...prev, ...bgPoints].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        const deduped = [];
+        const seen = new Set();
+        for (const p of merged) {
+          const key = `${p.timestamp}-${p.lat}-${p.lng}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          deduped.push(p);
+        }
+        return deduped.slice(-2500);
+      });
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [isNative]);
 
-  const clearTrajectory = useCallback(() => {
-    setTrajectory([]);
-    saveTrajectory([]);
+  const clearTrajectory = useCallback(async () => {
+    setTrajectoryHistory([]);
+    setTodayDist(0);
+    setTotalDist(0);
+    lastPointRef.current = null;
+    lastMilestoneRef.current = '';
+    await Preferences.remove({ key: STORAGE_KEYS.points });
+    await Preferences.remove({ key: STORAGE_KEYS.totalDist });
+    await Preferences.remove({ key: STORAGE_KEYS.todayDist });
+    await Preferences.remove({ key: STORAGE_KEYS.lastMilestone });
+    await Preferences.remove({ key: STORAGE_KEYS.lastPosition });
+    await clearBackgroundPoints();
   }, []);
+
+  const trajectory = useMemo(() => (showTrajectoryOnMap ? trajectoryHistory : []), [showTrajectoryOnMap, trajectoryHistory]);
 
   return {
     userPosition,
-    gpsError, setGpsError,
-    isTracking, setIsTracking,
+    userAccuracy,
+    gpsError,
+    setGpsError,
+    isTracking,
+    setIsTracking,
     trajectory,
+    trajectoryHistory,
+    trajectoryCount: trajectoryHistory.length,
+    showTrajectoryOnMap,
+    setShowTrajectoryOnMap,
     todayDist,
     totalDist,
     clearTrajectory,
