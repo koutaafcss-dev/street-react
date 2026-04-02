@@ -6,31 +6,27 @@ import {
 import { db } from "./firebase";
 import { useAuth } from "./hooks/useAuth";
 import { useGPS } from "./hooks/useGPS";
-import { usePosts } from "./hooks/usePosts";
+import { usePagination } from "./hooks/usePagination";
 import { useNotifications } from "./hooks/useNotifications";
 import { useGroup } from "./hooks/useGroup";
 import { usePostComposer } from "./hooks/usePostComposer";
 import { useUiShellState } from "./hooks/useUiShellState";
+import { useTextValidation } from "./hooks/useTextValidation";
+import { useAIModerator } from "./hooks/useAIModerator";
+import { usePostReporting } from "./hooks/usePostReporting";
 import MapView from "./components/MapView";
 import Sidebar from "./components/Sidebar";
 import PostForm from "./components/PostForm";
 import GroupPanel from "./components/GroupPanel";
 import ProfileAvatarEditor from "./components/ProfileAvatarEditor";
 import TrajectoryHistoryModal from "./components/TrajectoryHistoryModal";
+import AppealModal from "./components/AppealModal";
+import AdminDashboard from "./components/AdminDashboard";
 import { expandPostsForMap } from "./utils/expandPostsForMap";
+import { compressImage } from "./utils/imageOptimization";
 
 const POST_RADIUS = 1;
 const POST_SUCCESS_MESSAGES=["📍 地図に記録しました","🌱 この場所に残しました","✨ マップに追加されました","💫 記録が完了しました","🗺️ 地図に刻まれました"];
-
-// ====================================================
-// SECURITY v7
-// ====================================================
-const NG_WORDS_EXACT=["死ね","死んで","死ねよ","死にな","死んでくれ","殺す","殺すぞ","殺せ","消えろ","消えてくれ","ぶっ殺す","ぶっ殺","首つれ","首吊れ","首くくれ","ぶちのめす","ぶっ飛ばす","ぶん殴る","刺す","刺してやる","爆破","テロ","通り魔","リスカ","自傷","練炭","飛び降り","飛び降りろ","首吊り","睡眠薬大量","死にたい死にたい","うざい","うざすぎ","きもい","きもすぎ","クズ","ゴミ","最低野郎","バカ野郎","アホンダラ","死に損ない","生きてる価値ない","生きる価値ない","存在がゴミ","邪魔な存在","ちんこ","まんこ","ちんぽ","ちんちん","おっぱい","おちんちん","セックス","えっち","えちえち","えろい","エロい","ヌード","全裸","射精","勃起","フェラ","クンニ","オナニー","オナ","自慰","ポルノ","アダルト","エロ動画","えろ動画","援助交際","援交","売春","買春","パパ活","ママ活","風俗","デリヘル","ソープ","AV女優","ナンパ","ガチナンパ","レイプ","強姦","痴漢","盗撮","下着泥棒","のぞき","のぞき魔","ロリコン","ショタコン","幼女","児童ポルノ","チョン","チョンコ","チャンコロ","支那","土人","黒人め","白人め","ガイジン出てけ","外国人は嫌い","きちがい","キチガイ","精神病","基地外","池沼","知的障害者め","メクラ","つんぼ","ビッコ","てんかん持ちが","発達障害のくせ","自閉症のくせ","女のくせ","女は黙れ","男のくせ","ゲイのくせ","ホモ野郎","レズ野郎","おかまが","LGBT失せろ","貧乏人","底辺","低学歴","ブスがい","ブサイクが野郎","デブのくせ","ハゲのくせ","チビのくせ","不細工","生活保護","ナマポ","覚せい剤","覚醒剤","大麻","マリファナ","ヘロイン","コカイン","危険ドラッグ","爆弾の作り方","毒の作り方","ウイルス作成","LINE交換","ライン交換","Discord交換","電話番号教えて","住所教えて","会いに行く"];
-const NG_PATTERNS=[/死[ねぬんで]+/,/殺[すせして害]/,/自[殺傷]/,/首[つ吊く]/,/飛[びん]降/,/刺[すせし]|爆[破弾]|テロ/,/リスカ|練炭|睡眠薬.*大量/,/https?:\/\/|www\.|\.[comjpnetorg]/i,/\d{2,4}[-ー]\d{3,4}[-ー]\d{4}/,/0[5789]0[-ー\s]?\d{4}[-ー\s]?\d{4}/,/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/,/(.)\\1{5,}/,/し+ね|し+に+[なや]|し+ん+で/,/ころ+す|ころ+せ/,/き+もい|う+ざい|く+ず/,/えろ|えち|エロ|エッチ/i,/[ちチ][んン][こコポ]|[まマ][んン][こコ]/,/ポルノ|アダルト|わいせつ|猥褻/i,/援[助交]|売春|買春|パパ活|ママ活|風俗|デリヘル|ソープ/,/レイプ|強[姦]|痴漢|盗撮/,/ロリコン|ショタコン|幼女.*|児童.*ポルノ/,/チョン[コ]?|チャンコロ|支那/,/土[人め]|黒[人め]|白[人め]|ガイジン/,/池[沼]|きちがい|基地外|キチガイ/,/障[害が].*くせ|病[気き].*くせ/,/女.*くせ|男.*くせ|ゲイ.*くせ|ホモ|LGBT.*失/,/底辺|低学歴|ブス.*がい|デブ.*くせ|ハゲ.*くせ/,/覚[せ]い剤|覚醒剤|大麻|マリファナ|ヘロイン|コカイン|MDMA/i,/爆弾.*作り方|毒.*作り方|ウイルス.*作成/,/LINE交換|ライン交換|Discord交換|電話番号.*教え/i,/\b(kill|die|hate you|stupid|idiot|f+u+c+k|s+h+i+t|b+i+t+c+h|n+i+g+g|f+a+g|r+a+p+e)\b/i];
-const LEET_MAP={'☆':'','★':'','◆':'','◇':'','■':'','□':'','※':'','→':'','←':'','♡':'','♥':'','●':'','○':'','◎':'','▼':'','▽':'','△':'','▲':''};
-function normalizeText(t){let s=t.normalize("NFKC");for(const[k,v]of Object.entries(LEET_MAP))s=s.split(k).join(v);s=s.replace(/[\s\u200b\u3000\t\n\r　・･]/g,"");s=s.replace(/(.)\\1{2,}/g,"$1$1");s=s.replace(/shi/gi,"し").replace(/chi/gi,"ち").replace(/tsu/gi,"つ");return s;}
-function checkNG(text){if(!text?.trim())return{ok:false,message:"テキストを入力してください"};const raw=text.trim();if(raw.length<5)return{ok:false,message:"5文字以上入力してください"};if(raw.length>120)return{ok:false,message:"120文字以内で入力してください"};const n=normalizeText(raw);for(const w of NG_WORDS_EXACT)if(n.includes(normalizeText(w)))return{ok:false,message:"🚫 投稿できない内容が含まれています"};for(const p of NG_PATTERNS)if(p.test(n))return{ok:false,message:"🚫 投稿できない内容が含まれています"};return{ok:true,message:""};}
-
 
 
 
@@ -45,25 +41,6 @@ function getSuccessMessage(postType){
   if(postType==="callout")return"📢 呼びかけを投稿しました";
   if(postType==="event")return"📅 イベントを地図に追加しました";
   return POST_SUCCESS_MESSAGES[Math.floor(Math.random()*POST_SUCCESS_MESSAGES.length)];
-}
-
-async function compressImage(dataUrl,maxKB=120){
-  return new Promise((resolve,reject)=>{
-    const img=new Image();
-    img.onload=()=>{
-      const canvas=document.createElement("canvas");
-      let{width,height}=img;const maxDim=800;
-      if(width>maxDim||height>maxDim){const r=Math.min(maxDim/width,maxDim/height);width=Math.floor(width*r);height=Math.floor(height*r);}
-      canvas.width=width;canvas.height=height;
-      canvas.getContext("2d").drawImage(img,0,0,width,height);
-      let q=0.8,result=canvas.toDataURL("image/jpeg",q);
-      while(result.length*0.75>maxKB*1024&&q>0.2){q-=0.15;result=canvas.toDataURL("image/jpeg",q);}
-      if(result.length*0.75>maxKB*1024)reject(new Error("画像が大きすぎます（最大120KB）"));
-      else resolve(result);
-    };
-    img.onerror=()=>reject(new Error("画像の読み込みに失敗しました"));
-    img.src=dataUrl;
-  });
 }
 
 function getFirestoreError(err,fallback="通信エラーが発生しました。もう一度お試しください"){
@@ -114,9 +91,18 @@ export default function App(){
 
   // ─── Custom Hooks（分離済み） ───
   const { currentUser, authLoading } = useAuth();
-  const { posts, postsLoading } = usePosts(currentUser, {
+  const { posts, isLoading: postsLoading, hasMore, fetchMore } = usePagination(currentUser, {
     onError: err => showToastRef.current?.(getFirestoreError(err), "error"),
   });
+  const { checkNG } = useTextValidation();
+  
+  // AI モデレーション初期化（OpenAI API キーが設定されている場合）
+  const openaiApiKey = import.meta.env.VITE_OPENAI_API_KEY;
+  const { moderate, isModerating } = useAIModerator(openaiApiKey);
+
+  // 投稿報告システム
+  const { reportPost, checkUserReportedPost } = usePostReporting(currentUser);
+
   const {
     userPosition, userAccuracy, gpsError, setGpsError,
     isTracking, setIsTracking,
@@ -198,6 +184,17 @@ export default function App(){
   const initialLoadDoneRef=useRef(false);
   const prevPostsLengthRef=useRef(0);
 
+  // 報告フォーム state
+  const [reportingPostId, setReportingPostId] = useState(null);
+  const [reportReason, setReportReason] = useState("");
+  const [reportDescription, setReportDescription] = useState("");
+
+  // 異議申し立てモーダル state
+  const [appealingPost, setAppealingPost] = useState(null);
+
+  // 管理者ダッシュボード state
+  const [showAdminDashboard, setShowAdminDashboard] = useState(false);
+
   // ─── グループ機能 ───
   const {
     myGroups, groupsLoading,
@@ -265,6 +262,20 @@ export default function App(){
     if(!validation.ok){showToast(validation.message,"error");return;}
     if(isFrozen){showToast("投稿制限中です。しばらくお待ちください","error");return;}
     if(selectedLocations.length===0){showToast("地図をタップして場所を1つ以上追加してください","error");return;}
+
+    // AI モデレーション実行（有効な場合）
+    if(openaiApiKey){
+      try{
+        const aiResult=await moderate(postText);
+        if(!aiResult.safe){
+          showToast(aiResult.reason,"error");
+          return;
+        }
+      }catch(err){
+        console.error("AI moderation failed:",err);
+        // API エラー時は続行（フォールバック）
+      }
+    }
 
     const now=Date.now();
     const newTs=[...postTimestamps,now].filter(t=>now-t<30000);
@@ -370,11 +381,32 @@ export default function App(){
   };
 
   const handleReaction=async(id,emoji)=>{const post=posts.find(p=>p.id===id);if(!post||!currentUser)return;const users=post.reactions?.[emoji]||[];const has=users.includes(currentUser);try{await updateDoc(doc(db,"posts",id),{[`reactions.${emoji}`]:has?arrayRemove(currentUser):arrayUnion(currentUser)});}catch(e){showToast(getFirestoreError(e),"error");}};
-  const handleComment=async(id,text)=>{if(!text.trim()||!currentUser)return;const v=checkNG(text);if(!v.ok){showToast(v.message,"error");return;}const comment={id:Date.now().toString(),text:text.trim(),userId:currentUser,timestamp:Date.now()};try{await updateDoc(doc(db,"posts",id),{comments:arrayUnion(comment)});}catch(e){showToast(getFirestoreError(e),"error");}};
-
-  /**
-   * コメント削除 — トランザクション安全化（実装済み）
-   */
+  
+  const handleComment=async(id,text)=>{
+    if(!text.trim()||!currentUser)return;
+    const v=checkNG(text);
+    if(!v.ok){showToast(v.message,"error");return;}
+    
+    // AI モデレーション実行（有効な場合）
+    if(openaiApiKey){
+      try{
+        const aiResult=await moderate(text);
+        if(!aiResult.safe){
+          showToast(aiResult.reason,"error");
+          return;
+        }
+      }catch(err){
+        console.error("AI moderation failed:",err);
+      }
+    }
+    
+    const comment={id:Date.now().toString(),text:text.trim(),userId:currentUser,timestamp:Date.now()};
+    try{
+      await updateDoc(doc(db,"posts",id),{comments:arrayUnion(comment)});
+    }catch(e){
+      showToast(getFirestoreError(e),"error");
+    }
+  };
   const handleDeleteComment=async(postId,commentId)=>{
     if(!currentUser)return;
     try{
@@ -390,28 +422,57 @@ export default function App(){
   };
 
   /**
-   * 通報 — トランザクション化（reports同時更新の競合防止）
-   * 旧: post.reports+1 をクライアント値で計算 → 同時通報でズレる
-   * 新: transaction で最新値を読んで安全に更新
+   * 投稿報告フォームを表示
    */
-  const handleReport=async id=>{
-    if(!currentUser)return;
-    try{
-      await runTransaction(db,async transaction=>{
-        const postRef=doc(db,"posts",id);
-        const snap=await transaction.get(postRef);
-        if(!snap.exists())return;
-        const data=snap.data();
-        if((data.reportedBy||[]).includes(currentUser))return;
-        const nr=(data.reports||0)+1;
-        transaction.update(postRef,{
-          reports:nr,
-          reportedBy:arrayUnion(currentUser),
-          hidden:nr>=3,  // 3件で自動非表示
-        });
-      });
-      showToast("問題を報告しました");
-    }catch(e){showToast(getFirestoreError(e),"error");}
+  const handleReportStart = (postId) => {
+    setReportingPostId(postId);
+    setReportReason("");
+    setReportDescription("");
+  };
+
+  /**
+   * 投稿を報告（詳細理由付き・usePostReporting による）
+   */
+  const handleReportSubmit = async () => {
+    if (!currentUser || !reportingPostId) return;
+    if (!reportReason) {
+      showToast("報告理由を選択してください", "error");
+      return;
+    }
+
+    const result = await reportPost(reportingPostId, {
+      reason: reportReason,
+      description: reportDescription,
+    });
+
+    if (result.success) {
+      showToast("問題を報告しました。ご協力ありがとうございます", "success");
+      setReportingPostId(null);
+      setReportReason("");
+      setReportDescription("");
+    } else {
+      showToast("報告に失敗しました", "error");
+    }
+  };
+
+  /**
+   * 異議申し立てを開始
+   */
+  const handleAppealStart = (post) => {
+    setAppealingPost(post);
+  };
+
+  /**
+   * 異議申し立て完了時の処理
+   */
+  const handleAppealSubmitted = (result) => {
+    if (result.restored) {
+      showToast("異議申し立てが承認され、投稿が復元されました", "success");
+    } else if (result.status === "approved") {
+      showToast("異議申し立てが承認されました", "success");
+    } else {
+      showToast("異議申し立てが審査中です。結果は通知でお知らせします", "info");
+    }
   };
 
   /**
@@ -420,6 +481,20 @@ export default function App(){
   const handleEditSave=async(id,newText)=>{
     const v=checkNG(newText);
     if(!v.ok){showToast(v.message,"error");return;}
+    
+    // AI モデレーション実行（有効な場合）
+    if(openaiApiKey){
+      try{
+        const aiResult=await moderate(newText);
+        if(!aiResult.safe){
+          showToast(aiResult.reason,"error");
+          return;
+        }
+      }catch(err){
+        console.error("AI moderation failed:",err);
+      }
+    }
+    
     try{
       await updateDoc(doc(db,"posts",id),{
         text:newText.trim(),
@@ -483,7 +558,7 @@ export default function App(){
 
   const sidebarProps={
     activeTab,setActiveTab,radius,setRadius,posts:visiblePosts,currentUser,userPosition,searchText,setSearchText,sortMode,setSortMode,
-    onGoodJob:handleGoodJob,onDelete:handleDelete,onReport:handleReport,onEdit:setEditingId,editingId,onEditSave:handleEditSave,onShare:handleShare,onReaction:handleReaction,onBookmark:handleBookmark,bookmarks,onComment:handleComment,onDeleteComment:handleDeleteComment,
+    onGoodJob:handleGoodJob,onDelete:handleDelete,onReport:handleReportStart,onEdit:setEditingId,editingId,onEditSave:handleEditSave,onShare:handleShare,onReaction:handleReaction,onBookmark:handleBookmark,bookmarks,onComment:handleComment,onDeleteComment:handleDeleteComment,
     onStartPost:()=>{setIsPosting(true);setPostPhase("form");if(isMobile)setShowSidebar(false);},
     isFrozen,myPostsCount:myPosts.length,unreadCount,
     onShowNotif:()=>{setShowNotif(true);markAllRead();},
@@ -509,6 +584,7 @@ export default function App(){
     onOpenGroupPanel:()=>setShowGroupPanel(true),
     onOpenLocationSettings:()=>setShowLocationSettings(true),
     gpsPermissionStatus: gpsError,
+    showAdminDashboard, setShowAdminDashboard,
   };
 
   return(
@@ -763,6 +839,63 @@ export default function App(){
         onClear={()=>{clearTrajectory();showToast("軌跡をリセットしました");}}
       />
 
+      {/* 投稿報告フォーム */}
+      {reportingPostId && (
+        <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.5)",zIndex:5001,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:isDark?"rgba(5,8,16,0.98)":"white",borderRadius:20,padding:24,maxWidth:500,width:"90%",maxHeight:"80vh",overflowY:"auto",boxShadow:"0 20px 60px rgba(0,0,0,0.3)"}}>
+            <h3 style={{margin:"0 0 16px",fontSize:18,fontWeight:900,color:T.text}}>投稿の問題を報告</h3>
+            
+            {/* 報告理由選択 */}
+            <div style={{marginBottom:16}}>
+              <label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:8}}>報告理由</label>
+              <div style={{display:"flex",flexDirection:"column",gap:8}}>
+                {[
+                  {id:"misleading",label:"誤情報・詐欺的",emoji:"⚠️"},
+                  {id:"spam",label:"スパム",emoji:"📧"},
+                  {id:"harassment",label:"ハラスメント",emoji:"😠"},
+                  {id:"illegal",label:"違法行為",emoji:"🚨"},
+                  {id:"other",label:"その他",emoji:"❓"},
+                ].map(opt=>(
+                  <button key={opt.id} onClick={()=>setReportReason(opt.id)} style={{padding:"12px 14px",background:reportReason===opt.id?isDark?"rgba(59,130,246,0.2)":"rgba(59,130,246,0.1)":"transparent",border:`1px solid ${reportReason===opt.id?"#3b82f6":T.border}`,borderRadius:10,textAlign:"left",cursor:"pointer",color:T.text,fontWeight:reportReason===opt.id?700:400}}>
+                    <span style={{marginRight:8}}>{opt.emoji}</span>{opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 詳細説明 */}
+            <div style={{marginBottom:16}}>
+              <label style={{fontSize:12,fontWeight:700,color:T.sub,display:"block",marginBottom:8}}>詳細（オプション）</label>
+              <textarea value={reportDescription} onChange={e=>setReportDescription(e.target.value)} placeholder="より詳しく説明してください..." style={{width:"100%",padding:12,background:isDark?"rgba(255,255,255,0.06)":"#f8fafc",border:`1px solid ${T.border}`,borderRadius:10,color:T.text,fontSize:13,resize:"vertical",minHeight:80,outline:"none",boxSizing:"border-box"}}/>
+            </div>
+
+            {/* アクションボタン */}
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={handleReportSubmit} style={{flex:1,padding:"12px 16px",background:"linear-gradient(135deg,#ef4444,#dc2626)",color:"white",border:"none",borderRadius:10,fontWeight:700,cursor:"pointer",fontSize:14}}>報告する</button>
+              <button onClick={()=>setReportingPostId(null)} style={{flex:1,padding:"12px 16px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:10,color:T.text,fontWeight:700,cursor:"pointer",fontSize:14}}>キャンセル</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 異議申し立てモーダル */}
+      {appealingPost && (
+        <AppealModal
+          post={appealingPost}
+          onClose={() => setAppealingPost(null)}
+          onAppealSubmitted={handleAppealSubmitted}
+        />
+      )}
+
+      {/* 管理者ダッシュボード */}
+      {showAdminDashboard && (
+        <AdminDashboard
+          onClose={() => setShowAdminDashboard(false)}
+          isDark={isDark}
+          T={T}
+        />
+      )}
+
       {/* 通知パネル */}
       {showNotif&&(
         <div style={{position:"fixed",top:0,right:0,width:isMobile?"100vw":"320px",height:"100vh",background:isDark?"rgba(5,8,16,0.99)":"#f8fafc",borderLeft:`1px solid ${T.border}`,zIndex:5000,display:"flex",flexDirection:"column",animation:"notifSlide 0.25s ease"}}>
@@ -823,6 +956,7 @@ export default function App(){
           highlightMine={highlightMine} pinnedIds={pinnedIds}
           isMobile={isMobile}
           flyToTarget={flyToTarget}
+          onAppeal={handleAppealStart}
         />
 
         {/* モバイル FAB */}

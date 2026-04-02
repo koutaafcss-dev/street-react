@@ -54,7 +54,7 @@ function makeMarkerEl(post,isOwn,isPinned,isHL,onClick){
 }
 
 // ─── PostPanel ───────────────────────────────────────
-function PostPanel({post,currentUser,isDark,T,onGoodJob,onHelped,onBookmark,bookmarks,onShare,onReport,onDelete,onEdit,editingId,onEditSave,onReaction,onComment,onDeleteComment,onClose}){
+function PostPanel({post,currentUser,isDark,T,onGoodJob,onHelped,onBookmark,bookmarks,onShare,onReport,onDelete,onEdit,editingId,onEditSave,onReaction,onComment,onDeleteComment,onClose,onAppeal}){
   const [commentText,setCommentText]=useState("");
   const [showAll,setShowAll]=useState(false);
   const [editText,setEditText]=useState(post.text);
@@ -153,6 +153,8 @@ function PostPanel({post,currentUser,isDark,T,onGoodJob,onHelped,onBookmark,book
           {aBtn("🔖",isBookmarked?"済":"保存",()=>onBookmark(post.id),isBookmarked)}
           {aBtn("📤","シェア",()=>onShare(post))}
           {isOwn?(<>{aBtn("✏️","編集",()=>onEdit(post.id))}{aBtn("🗑️","削除",()=>{onDelete(post.id);onClose();},false,true)}</>):(aBtn("🚩","通報",()=>onReport(post.id)))}
+          {/* 異議申し立てボタン - 自分の投稿が削除されている場合のみ表示 */}
+          {isOwn && post.hidden && aBtn("⚖️","異議申し立て",()=>onAppeal(post))}
         </div>
 
         {/* コメント */}
@@ -200,6 +202,7 @@ export default function MapView({
   highlightMine,pinnedIds,
   isMobile,
   flyToTarget,
+  onAppeal,
 }){
   const containerRef=useRef(null);
   const mapRef=useRef(null);
@@ -502,6 +505,7 @@ export default function MapView({
           onEdit={onEdit} editingId={editingId} onEditSave={onEditSave}
           onReaction={onReaction} onComment={onComment} onDeleteComment={onDeleteComment}
           onClose={()=>setSelectedPostId(null)}
+          onAppeal={onAppeal}
         />
       )}
     </div>

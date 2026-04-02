@@ -1,0 +1,52 @@
+// firestore.rules
+// ユーザー報告機能用セキュリティルール
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 投稿とそのサブコレクション（報告）
+    match /posts/{postId} {
+      allow read: if true;  // 誰でも読み取り可能
+      
+      allow create: if request.auth != null 
+                    && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if request.auth != null 
+                            && request.auth.uid == resource.data.userId;
+
+      // 報告サブコレクション
+      match /reports/{reportId} {
+        // 認証済みユーザーのみ報告作成可能
+        allow create: if request.auth != null
+                      && request.resource.data.reportedBy == request.auth.uid
+                      && request.resource.data.timestamp == request.time.toMillis();
+        
+        // 管理者のみ報告を読み取り・更新可能
+        allow read, update: if request.auth != null 
+                            && request.auth.token.admin == true;
+        
+        // 報告者本人は自分の報告を読み取り可能
+        allow read: if request.auth != null
+                    && request.auth.uid == resource.data.reportedBy;
+      }
+    }
+
+    // ユーザードキュメント（警告メッセージ）
+    match /users/{userId} {
+      allow read, update: if request.auth != null
+                          && request.auth.uid == userId;
+      
+      // 管理者のみ全ユーザー情報を読み取り
+      allow read: if request.auth != null
+                  && request.auth.token.admin == true;
+    }
+
+    // 管理者用レポートコレクション
+    match /admin_reports/{reportId} {
+      allow read: if request.auth != null && request.auth.token.admin == true;
+    }
+  }
+}
+
+// カスタム認証クレーム設定（Cloud Functions で）
+// ref.auth().setCustomUserClaims(uid, {admin: true})

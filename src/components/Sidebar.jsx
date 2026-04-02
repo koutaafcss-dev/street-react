@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import TrustScoreDisplay from "./TrustScoreDisplay";
 
 function getDistance(lat1, lng1, lat2, lng2) {
   const R = 6371;
@@ -181,6 +182,8 @@ function ProfileTab({
         </div>
       </div>
 
+      <TrustScoreDisplay isDark={isDark} T={T} />
+
       <div style={{ background: T.card, border: `1px solid ${T.cardBorder}`, borderRadius: 16, padding: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
           <div>
@@ -305,6 +308,7 @@ export default function Sidebar(props) {
     onOpenGroupPanel,
     onOpenLocationSettings,
     gpsPermissionStatus,
+    showAdminDashboard, setShowAdminDashboard,
     profileAvatarEmoji,
     profileAvatarPhoto,
     onEditAvatar,
