@@ -9,10 +9,12 @@ const AdminDashboard = ({ onClose, isDark, T }) => {
   const { user } = useAuth();
   const [appeals, setAppeals] = useState([]);
   const [users, setUsers] = useState([]);
+  const [trajectories, setTrajectories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('appeals');
   const [selectedAppeal, setSelectedAppeal] = useState(null);
   const [selectedUser, setSelectedUser] = useState(null);
+  const [selectedTrajectory, setSelectedTrajectory] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
 
   useEffect(() => {
@@ -57,9 +59,28 @@ const AdminDashboard = ({ onClose, isDark, T }) => {
       setLoading(false);
     });
 
+    // 軌跡データの監視（管理者のみ）
+    const trajectoriesQuery = query(
+      collection(db, 'user_trajectories'),
+      orderBy('lastUpdated', 'desc'),
+      limit(50) // 最新50件の軌跡データを取得
+    );
+
+    const unsubscribeTrajectories = onSnapshot(trajectoriesQuery, (snapshot) => {
+      const trajectoriesData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data(),
+        lastUpdated: doc.data().lastUpdated?.toDate(),
+        startTime: doc.data().startTime?.toDate(),
+        endTime: doc.data().endTime?.toDate(),
+      }));
+      setTrajectories(trajectoriesData);
+    });
+
     return () => {
       unsubscribeAppeals();
       unsubscribeUsers();
+      unsubscribeTrajectories();
     };
   }, [user]);
 
@@ -83,10 +104,6 @@ const AdminDashboard = ({ onClose, isDark, T }) => {
       setActionLoading(false);
     }
   };
-    } finally {
-      setActionLoading(false);
-    }
-  };
 
   const handleUserAction = async (userId, action, reason = '') => {
     setActionLoading(true);
@@ -106,8 +123,6 @@ const AdminDashboard = ({ onClose, isDark, T }) => {
       alert('処理中にエラーが発生しました: ' + error.message);
     } finally {
       setActionLoading(false);
-    }
-  };
     }
   };
 
@@ -162,6 +177,22 @@ const AdminDashboard = ({ onClose, isDark, T }) => {
             }}
           >
             ユーザー管理 ({users.length})
+          </button>
+          <button
+            onClick={() => setActiveTab('trajectories')}
+            style={{
+              flex:1,
+              padding:"8px 0",
+              background:activeTab==='trajectories'?(isDark?"rgba(255,255,255,0.08)":"rgba(0,0,0,0.06)"):"transparent",
+              border:`1px solid ${activeTab==='trajectories'?T.sub:T.border}`,
+              borderRadius:999,
+              color:activeTab==='trajectories'?T.text:T.muted,
+              fontSize:12,
+              fontWeight:activeTab==='trajectories'?800:500,
+              cursor:"pointer"
+            }}
+          >
+            軌跡データ ({trajectories.length})
           </button>
         </div>
 
@@ -239,6 +270,106 @@ const AdminDashboard = ({ onClose, isDark, T }) => {
                 ))}
               </div>
             )}
+          </div>
+        )}
+
+        {activeTab === 'trajectories' && (
+          <div>
+            <h3 style={{margin:"0 0 15px",fontSize:16,fontWeight:700}}>ユーザー軌跡データ</h3>
+            
+            {trajectories.length === 0 ? (
+              <div style={{textAlign:"center",padding:40,color:T.muted}}>
+                軌跡データはありません
+              </div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                {trajectories.map(trajectory => (
+                  <div key={trajectory.id} style={{border:`1px solid ${T.border}`,borderRadius:10,padding:16,cursor:"pointer"}} onClick={() => setSelectedTrajectory(trajectory)}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+                      <div>
+                        <div style={{fontSize:14,fontWeight:700,marginBottom:4}}>
+                          匿名ユーザーID: {trajectory.anonymousUserId.slice(-8)}
+                        </div>
+                        <div style={{fontSize:12,color:T.muted}}>
+                          最終更新: {trajectory.lastUpdated?.toLocaleString('ja-JP')}
+                        </div>
+                      </div>
+                      <div style={{fontSize:12,color:"#3b82f6",background:"rgba(59,130,246,0.1)",padding:"2px 8px",borderRadius:999}}>
+                        {trajectory.totalPoints || 0} ポイント
+                      </div>
+                    </div>
+                    <div style={{fontSize:13,color:T.sub}}>
+                      総距離: {trajectory.totalDistance?.toFixed(2) || 0} km | 
+                      平均速度: {trajectory.averageSpeed?.toFixed(2) || 0} km/h | 
+                      期間: {trajectory.startTime?.toLocaleString('ja-JP')} - {trajectory.endTime?.toLocaleString('ja-JP')}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {selectedTrajectory && (
+          <div style={{borderTop:`1px solid ${T.border}`,paddingTop:20,marginTop:20}}>
+            <h3 style={{margin:"0 0 15px",fontSize:16,fontWeight:700}}>軌跡データ詳細</h3>
+            
+            <div style={{marginBottom:15}}>
+              <div style={{fontSize:14,fontWeight:700,marginBottom:5}}>匿名ユーザーID:</div>
+              <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:12,fontSize:13,fontFamily:"monospace"}}>
+                {selectedTrajectory.anonymousUserId}
+              </div>
+            </div>
+
+            <div style={{marginBottom:15}}>
+              <div style={{fontSize:14,fontWeight:700,marginBottom:5}}>移動統計:</div>
+              <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:12}}>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(150px, 1fr))",gap:10}}>
+                  <div>
+                    <div style={{fontSize:12,color:T.muted}}>総距離</div>
+                    <div style={{fontSize:18,fontWeight:900,color:"#10b981"}}>{selectedTrajectory.totalDistance?.toFixed(2) || 0} km</div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:12,color:T.muted}}>平均速度</div>
+                    <div style={{fontSize:18,fontWeight:900,color:"#3b82f6"}}>{selectedTrajectory.averageSpeed?.toFixed(2) || 0} km/h</div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:12,color:T.muted}}>データポイント数</div>
+                    <div style={{fontSize:18,fontWeight:900,color:"#f59e0b"}}>{selectedTrajectory.totalPoints || 0}</div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:12,color:T.muted}}>地理的範囲</div>
+                    <div style={{fontSize:14,fontWeight:700}}>
+                      {selectedTrajectory.boundingBox ? 
+                        `${selectedTrajectory.boundingBox.northEast.lat.toFixed(4)}, ${selectedTrajectory.boundingBox.northEast.lng.toFixed(4)}` : 
+                        'N/A'
+                      }
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{marginBottom:20}}>
+              <div style={{fontSize:14,fontWeight:700,marginBottom:5}}>時間範囲:</div>
+              <div style={{background:T.card,border:`1px solid ${T.border}`,borderRadius:8,padding:12,fontSize:13}}>
+                <div>開始: {selectedTrajectory.startTime?.toLocaleString('ja-JP')}</div>
+                <div>終了: {selectedTrajectory.endTime?.toLocaleString('ja-JP')}</div>
+                <div>期間: {selectedTrajectory.startTime && selectedTrajectory.endTime ? 
+                  `${Math.round((selectedTrajectory.endTime - selectedTrajectory.startTime) / (1000 * 60))} 分` : 
+                  'N/A'
+                }</div>
+              </div>
+            </div>
+
+            <div style={{display:"flex",gap:10}}>
+              <button
+                onClick={() => setSelectedTrajectory(null)}
+                style={{padding:"10px 16px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:8,color:T.text,cursor:"pointer"}}
+              >
+                閉じる
+              </button>
+            </div>
           </div>
         )}
 

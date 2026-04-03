@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
+import { db } from '../firebase';
+import { collection, addDoc, query, where, orderBy, limit, getDocs, onSnapshot } from 'firebase/firestore';
+import { auth } from '../firebase';
 import {
   ensureNativeLocationPermission,
   ensureBackgroundRunnerPermissions,
@@ -46,6 +49,109 @@ async function prefGetNumber(key, fallback = 0) {
 
 async function prefSetNumber(key, value) {
   await Preferences.set({ key, value: String(value) });
+}
+
+/**
+ * 軌跡データをFirestoreに保存（管理側閲覧用）
+ * プライバシー保護のため、匿名化して保存
+ */
+async function saveTrajectoryToFirestore(trajectoryPoints) {
+  if (!trajectoryPoints.length) return;
+
+  try {
+    // 現在のユーザーを取得
+    const user = auth.currentUser;
+    if (!user) return;
+
+    // 匿名化: ユーザーIDをハッシュ化
+    const crypto = window.crypto || require('crypto');
+    const encoder = new TextEncoder();
+    const data = encoder.encode(user.uid);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const anonymousUserId = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+    // 軌跡データを集約（プライバシー保護）
+    const aggregatedData = {
+      anonymousUserId,
+      totalPoints: trajectoryPoints.length,
+      startTime: trajectoryPoints[0]?.timestamp,
+      endTime: trajectoryPoints[trajectoryPoints.length - 1]?.timestamp,
+      // 詳細な位置情報は保存せず、統計情報のみ
+      boundingBox: calculateBoundingBox(trajectoryPoints),
+      totalDistance: calculateTotalDistance(trajectoryPoints),
+      averageSpeed: calculateAverageSpeed(trajectoryPoints),
+      lastUpdated: new Date(),
+      // 管理側でのみ閲覧可能
+      adminOnly: true
+    };
+
+    // Firestoreに直接保存（ドキュメントIDとして匿名ユーザーIDを使用）
+    const trajectoryRef = collection(db, 'user_trajectories');
+    await addDoc(trajectoryRef, aggregatedData);
+
+    console.log('軌跡データを保存しました');
+  } catch (error) {
+    console.error('軌跡データの保存に失敗しました:', error);
+  }
+}
+
+/**
+ * 軌跡データのバウンディングボックスを計算
+ */
+function calculateBoundingBox(points) {
+  if (!points.length) return null;
+
+  let minLat = points[0].lat;
+  let maxLat = points[0].lat;
+  let minLng = points[0].lng;
+  let maxLng = points[0].lng;
+
+  for (const point of points) {
+    minLat = Math.min(minLat, point.lat);
+    maxLat = Math.max(maxLat, point.lat);
+    minLng = Math.min(minLng, point.lng);
+    maxLng = Math.max(maxLng, point.lng);
+  }
+
+  return {
+    minLat,
+    maxLat,
+    minLng,
+    maxLng,
+    centerLat: (minLat + maxLat) / 2,
+    centerLng: (minLng + maxLng) / 2
+  };
+}
+
+/**
+ * 軌跡データの総距離を計算
+ */
+function calculateTotalDistance(points) {
+  if (points.length < 2) return 0;
+
+  let totalDistance = 0;
+  for (let i = 1; i < points.length; i++) {
+    totalDistance += getDistanceKm(
+      points[i-1].lat, points[i-1].lng,
+      points[i].lat, points[i].lng
+    );
+  }
+  return totalDistance;
+}
+
+/**
+ * 平均速度を計算（km/h）
+ */
+function calculateAverageSpeed(points) {
+  if (points.length < 2) return 0;
+
+  const totalDistance = calculateTotalDistance(points);
+  const startTime = points[0].timestamp;
+  const endTime = points[points.length - 1].timestamp;
+  const timeDiffHours = (endTime - startTime) / (1000 * 60 * 60);
+
+  return timeDiffHours > 0 ? totalDistance / timeDiffHours : 0;
 }
 
 async function prefGetBoolean(key, fallback = false) {
@@ -392,6 +498,21 @@ export function useGPS(options = {}) {
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [isNative]);
+
+  // 軌跡データを定期的にFirestoreに保存するuseEffect
+  useEffect(() => {
+    if (!isTracking || trajectoryHistory.length === 0) return;
+
+    const saveTrajectoryInterval = setInterval(async () => {
+      try {
+        await saveTrajectoryToFirestore(trajectoryHistory);
+      } catch (error) {
+        console.error('軌跡データの保存に失敗しました:', error);
+      }
+    }, 30000); // 30秒ごとに保存
+
+    return () => clearInterval(saveTrajectoryInterval);
+  }, [isTracking, trajectoryHistory]);
 
   const clearTrajectory = useCallback(async () => {
     setTrajectoryHistory([]);

@@ -48,6 +48,8 @@ export default function PostForm({
   chainPost, isDark, T,
   canPost, weatherInfo, userPosition,
   onConfirm, onCancel,
+  isPhoneVerified, onShowAuth,
+  moderateImage,
 }) {
   const fileRef = useRef(null);
   const [showNeedTags, setShowNeedTags] = useState(false);
@@ -63,12 +65,29 @@ export default function PostForm({
     );
   }
 
-  const handlePhoto = e => {
+  const handlePhoto = async e => {
     const f = e.target.files?.[0];
     if (!f) return;
     if (f.size > 2*1024*1024) { alert("2MB以下の画像を選択してください"); return; }
     const r = new FileReader();
-    r.onload = ev => setPostPhoto(ev.target.result);
+    r.onload = async ev => {
+      const imageData = ev.target.result;
+      setPostPhoto(imageData);
+      
+      // 画像AIモデレーション実行（有効な場合）
+      if (moderateImage) {
+        try {
+          const result = await moderateImage(imageData);
+          if (!result.safe) {
+            alert(`⚠️ この画像は投稿できません:\n${result.reason}`);
+            setPostPhoto(null);
+          }
+        } catch (err) {
+          console.error("Image moderation error:", err);
+          // エラー時は続行（ユーザー判定）
+        }
+      }
+    };
     r.readAsDataURL(f);
   };
 
@@ -277,6 +296,37 @@ export default function PostForm({
             </div>
           </div>
         </div>
+
+        {/* 認証されていない場合 */}
+        {!isPhoneVerified && (
+          <div style={{
+            padding: "12px",
+            marginBottom: "12px",
+            background: "rgba(59, 130, 246, 0.1)",
+            border: "1px solid rgba(59, 130, 246, 0.3)",
+            borderRadius: 10,
+            textAlign: "center",
+          }}>
+            <div style={{ fontSize: 12, color: T.text, marginBottom: 8, fontWeight: 700 }}>
+              📱 投稿にはアカウント作成が必要です
+            </div>
+            <button
+              onClick={onShowAuth}
+              style={{
+                padding: "8px 16px",
+                background: "#3b82f6",
+                border: "none",
+                borderRadius: 8,
+                color: "white",
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              アカウント作成
+            </button>
+          </div>
+        )}
 
         {/* 場所を決めるボタン */}
         <button

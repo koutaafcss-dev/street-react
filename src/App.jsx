@@ -13,6 +13,7 @@ import { usePostComposer } from "./hooks/usePostComposer";
 import { useUiShellState } from "./hooks/useUiShellState";
 import { useTextValidation } from "./hooks/useTextValidation";
 import { useAIModerator } from "./hooks/useAIModerator";
+import { useImageVideoModerator } from "./hooks/useImageVideoModerator";
 import { usePostReporting } from "./hooks/usePostReporting";
 import MapView from "./components/MapView";
 import Sidebar from "./components/Sidebar";
@@ -22,6 +23,7 @@ import ProfileAvatarEditor from "./components/ProfileAvatarEditor";
 import TrajectoryHistoryModal from "./components/TrajectoryHistoryModal";
 import AppealModal from "./components/AppealModal";
 import AdminDashboard from "./components/AdminDashboard";
+import PhoneAuthModal from "./components/PhoneAuthModal";
 import { expandPostsForMap } from "./utils/expandPostsForMap";
 import { compressImage } from "./utils/imageOptimization";
 
@@ -90,18 +92,21 @@ export default function App(){
   const showToastRef = useRef(null);
 
   // ─── Custom Hooks（分離済み） ───
-  const { currentUser, authLoading } = useAuth();
+  const { currentUser, isAnonymous, isPhoneVerified, displayName, suspended, trustScore, authLoading } = useAuth();
   const { posts, isLoading: postsLoading, hasMore, fetchMore } = usePagination(currentUser, {
     onError: err => showToastRef.current?.(getFirestoreError(err), "error"),
   });
   const { checkNG } = useTextValidation();
   
-  // AI モデレーション初期化（OpenAI API キーが設定されている場合）
-  const openaiApiKey = import.meta.env.VITE_OPENAI_API_KEY;
-  const { moderate, isModerating } = useAIModerator(openaiApiKey);
+  // AI モデレーション初期化（Cloud Functions経由）
+  const { moderate, isModerating } = useAIModerator(null); // APIキーをnullに設定
+  const { moderateImage } = useImageVideoModerator(null);
 
   // 投稿報告システム
   const { reportPost, checkUserReportedPost } = usePostReporting(currentUser);
+  
+  // 電話認証モーダルの表示状態
+  const [showPhoneAuth, setShowPhoneAuth] = useState(false);
 
   const {
     userPosition, userAccuracy, gpsError, setGpsError,
@@ -250,29 +255,51 @@ export default function App(){
   },[activeTab,posts.length]);
 
   const validation=checkNG(postText);
-  const canPost=validation.ok;
+  const canPost=validation.ok && isPhoneVerified && !suspended;
 
-  const resetForm=useCallback(()=>{
-    resetFormBase();
-    setSelectedLocations([]);
-  },[resetFormBase]);
+  const handlePostClick = useCallback(() => {
+    if (!isPhoneVerified) {
+      showToast("投稿にはアカウント作成が必要です", "error");
+      setShowPhoneAuth(true);
+      return;
+    }
+    if (suspended) {
+      showToast("📛 このアカウントは一時停止中です。管理者に確認してください", "error");
+      return;
+    }
+    if (!validation.ok) {
+      showToast(validation.message, "error");
+    }
+  }, [isPhoneVerified, suspended, validation]);
 
   const savePostWithSelectedLocations=useCallback(async()=>{
     if(!currentUser){showToast("認証中です。少しお待ちください","error");return;}
+    if(suspended){showToast("📛 アカウントが一時停止中です。投稿できません","error");return;}
     if(!validation.ok){showToast(validation.message,"error");return;}
     if(isFrozen){showToast("投稿制限中です。しばらくお待ちください","error");return;}
     if(selectedLocations.length===0){showToast("地図をタップして場所を1つ以上追加してください","error");return;}
 
-    // AI モデレーション実行（有効な場合）
-    if(openaiApiKey){
-      try{
-        const aiResult=await moderate(postText);
-        if(!aiResult.safe){
-          showToast(aiResult.reason,"error");
+    // AI モデレーション実行（Cloud Functions経由）
+    if (true) { // 常に実行（APIキー不要）
+      try {
+        const moderateText = httpsCallable(functions, 'moderateText');
+        const aiResult = await moderateText({ text: postText });
+        if (!aiResult.data.safe) {
+          showToast(aiResult.data.reason, "error");
           return;
         }
-      }catch(err){
-        console.error("AI moderation failed:",err);
+
+        // 画像モデレーション実行
+        if (postPhoto) {
+          const moderateImageFn = httpsCallable(functions, 'moderateImage');
+          const imageResult = await moderateImageFn({ imageData: postPhoto });
+          if (!imageResult.data.safe) {
+            showToast(imageResult.data.reason, "error");
+            return;
+          }
+        }
+      } catch (err) {
+        console.error("AI moderation failed:", err);
         // API エラー時は続行（フォールバック）
       }
     }
@@ -585,6 +612,10 @@ export default function App(){
     onOpenLocationSettings:()=>setShowLocationSettings(true),
     gpsPermissionStatus: gpsError,
     showAdminDashboard, setShowAdminDashboard,
+    isPhoneVerified,
+    onShowAuth: () => setShowPhoneAuth(true),
+    suspended,
+    trustScore,
   };
 
   return(
@@ -896,6 +927,19 @@ export default function App(){
         />
       )}
 
+      {/* 電話認証モーダル */}
+      {showPhoneAuth && (
+        <PhoneAuthModal
+          isDark={isDark}
+          T={T}
+          onAuthComplete={() => {
+            setShowPhoneAuth(false);
+            showToast("アカウント作成が完了しました！投稿できるようになります");
+          }}
+          onCancel={() => setShowPhoneAuth(false)}
+        />
+      )}
+
       {/* 通知パネル */}
       {showNotif&&(
         <div style={{position:"fixed",top:0,right:0,width:isMobile?"100vw":"320px",height:"100vh",background:isDark?"rgba(5,8,16,0.99)":"#f8fafc",borderLeft:`1px solid ${T.border}`,zIndex:5000,display:"flex",flexDirection:"column",animation:"notifSlide 0.25s ease"}}>
@@ -1029,6 +1073,8 @@ export default function App(){
               chainPost={chainPost} isDark={isDark} T={T}
               canPost={canPost} userPosition={userPosition}
               onConfirm={()=>{setSelectedLocations([]);setPostPhase("picking");}} onCancel={resetForm}
+              isPhoneVerified={isPhoneVerified} onShowAuth={() => setShowPhoneAuth(true)}
+              moderateImage={moderateImage}
             />
           );
         })()}

@@ -226,11 +226,17 @@ async function applyAppealBonus(userId) {
 
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
+import { defineSecret } from "firebase-functions/params";
 import OpenAI from "openai";
 
 const db = admin.firestore();
+
+// OpenAI APIキー（paramsを使用）
+const openaiApiKey = defineSecret("OPENAI_API_KEY");
+
+// OpenAI 初期化（paramsを使用、フォールバックとして環境変数）
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: openaiApiKey?.value() || process.env.OPENAI_API_KEY,
 });
 
 // 報告の重大度レベル
@@ -345,6 +351,109 @@ async function calculateReporterTrustScore(userId) {
     return 50;
   }
 }
+
+/**
+ * AI テキストモデレーション関数
+ */
+export const moderateText = functions
+  .region("asia-southeast2")
+  .https.onCall(async (data, context) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError("unauthenticated", "認証が必要です");
+    }
+
+    const { text } = data;
+    if (!text || text.trim().length === 0) {
+      return { safe: true, reason: "テキストが空です" };
+    }
+
+    try {
+      const response = await openai.moderations.create({
+        model: "text-moderation-latest",
+        input: text,
+      });
+
+      const result = response.results[0];
+      const safe = !result.flagged;
+
+      let reason = "安全";
+      if (!safe) {
+        const categories = result.categories;
+        if (categories.harassment) reason = "ハラスメント";
+        else if (categories.hate) reason = "ヘイトスピーチ";
+        else if (categories.violence) reason = "暴力表現";
+        else if (categories.self_harm) reason = "自傷表現";
+        else if (categories.sexual) reason = "性的コンテンツ";
+        else reason = "不適切なコンテンツ";
+      }
+
+      return { safe, reason };
+    } catch (error) {
+      console.error("Text moderation error:", error);
+      // API エラー時は安全側に倒す
+      return { safe: true, reason: "モデレーションAPIエラー（安全側判定）" };
+    }
+  });
+
+/**
+ * AI 画像・動画モデレーション関数
+ */
+export const moderateImage = functions
+  .region("asia-southeast2")
+  .https.onCall(async (data, context) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError("unauthenticated", "認証が必要です");
+    }
+
+    const { imageData } = data; // base64 データ
+    if (!imageData) {
+      return { safe: true, reason: "画像データがありません" };
+    }
+
+    try {
+      const response = await openai.chat.completions.create({
+        model: "gpt-4-vision-preview",
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "この画像を分析してください。以下のカテゴリで0-100のスコアをつけてください：暴力・危険、性的コンテンツ、ハラスメント、個人情報、詐欺・スパム、違法物。JSON形式で返してください。",
+              },
+              {
+                type: "image_url",
+                image_url: { url: `data:image/jpeg;base64,${imageData}` },
+              },
+            ],
+          },
+        ],
+        max_tokens: 500,
+      });
+
+      const content = response.choices[0]?.message?.content;
+      const scores = JSON.parse(content);
+
+      // いずれかのスコアが70以上なら不安全
+      const maxScore = Math.max(
+        scores.violence || 0,
+        scores.sexual || 0,
+        scores.harassment || 0,
+        scores.personal || 0,
+        scores.fraud || 0,
+        scores.illegal || 0
+      );
+
+      const safe = maxScore < 70;
+      const reason = safe ? "安全" : `不適切なコンテンツ検出（スコア: ${maxScore}）`;
+
+      return { safe, reason, scores };
+    } catch (error) {
+      console.error("Image moderation error:", error);
+      // API エラー時は安全側に倒す
+      return { safe: true, reason: "画像モデレーションAPIエラー（安全側判定）" };
+    }
+  });
 
 /**
  * Cloud Function: 定期的に報告をチェック & 削除判定
@@ -471,6 +580,22 @@ export const moderateReportsScheduled = functions
   });
 
 /**
+ * 管理者権限チェック関数
+ */
+async function checkAdminRole(uid) {
+  try {
+    const userDoc = await db.collection("users").doc(uid).get();
+    if (!userDoc.exists) return false;
+
+    const userData = userDoc.data();
+    return userData.role === "admin" || userData.isAdmin === true;
+  } catch (error) {
+    console.error("Admin check error:", error);
+    return false;
+  }
+}
+
+/**
  * Cloud Function: 異議申し立てを処理
  */
 export const processAppeal = functions
@@ -559,11 +684,11 @@ export const processAppealByAdmin = functions
       throw new functions.https.HttpsError("unauthenticated", "認証が必要です");
     }
 
-    // TODO: 管理者権限チェックを追加
-    // const isAdmin = await checkAdminRole(context.auth.uid);
-    // if (!isAdmin) {
-    //   throw new functions.https.HttpsError("permission-denied", "管理者権限が必要です");
-    // }
+    // 管理者権限チェック
+    const isAdmin = await checkAdminRole(context.auth.uid);
+    if (!isAdmin) {
+      throw new functions.https.HttpsError("permission-denied", "管理者権限が必要です");
+    }
 
     const { appealId, action, adminNote } = data; // action: "approve" | "deny" | "escalate"
 
@@ -658,11 +783,11 @@ export const manageUserByAdmin = functions
       throw new functions.https.HttpsError("unauthenticated", "認証が必要です");
     }
 
-    // TODO: 管理者権限チェックを追加
-    // const isAdmin = await checkAdminRole(context.auth.uid);
-    // if (!isAdmin) {
-    //   throw new functions.https.HttpsError("permission-denied", "管理者権限が必要です");
-    // }
+    // 管理者権限チェック
+    const isAdmin = await checkAdminRole(context.auth.uid);
+    if (!isAdmin) {
+      throw new functions.https.HttpsError("permission-denied", "管理者権限が必要です");
+    }
 
     const { userId, action, reason } = data; // action: "suspend" | "unsuspend" | "reset_score"
 

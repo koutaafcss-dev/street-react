@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import TrustScoreDisplay from "./TrustScoreDisplay";
+import { getEventStatus, formatEventTime } from "../utils/eventHelpers";
 
 function getDistance(lat1, lng1, lat2, lng2) {
   const R = 6371;
@@ -132,6 +133,10 @@ function ProfileTab({
   onShowTrajectoryHistory,
   onOpenLocationSettings,
   gpsPermissionStatus,
+  isPhoneVerified,
+  onShowAuth,
+  suspended,
+  trustScore,
 }) {
   const lastTrajectory = trajectoryHistory?.length
     ? new Date(trajectoryHistory[trajectoryHistory.length - 1].timestamp).toLocaleString("ja-JP", {
@@ -155,12 +160,29 @@ function ProfileTab({
           />
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontSize: 18, fontWeight: 900, color: T.text }}>{nickname || "名無し"}</div>
-            <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>
-              {currentUser ? "匿名ログイン中" : "ログイン中"}
+            <div style={{ fontSize: 11, color: suspended ? "#ef4444" : isPhoneVerified ? "#10b981" : T.muted, marginTop: 2, fontWeight: suspended || isPhoneVerified ? 700 : 400 }}>
+              {suspended ? "⛔ 一時停止中" : isPhoneVerified ? "✅ アカウント作成済み" : "👤 ゲストユーザー"}
             </div>
+            
+            {/* 信頼スコア表示 */}
+            {isPhoneVerified && trustScore !== undefined && (
+              <div style={{ fontSize: 11, color: T.muted, marginTop: 6 }}>
+                信頼スコア: <span style={{ 
+                  color: trustScore >= 70 ? "#10b981" : trustScore >= 40 ? "#f59e0b" : "#ef4444",
+                  fontWeight: 700
+                }}>{trustScore}</span> / 100
+              </div>
+            )}
+            
             <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-              <button onClick={onEditNick} style={{ padding: "6px 12px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 999, color: T.sub, fontSize: 11, cursor: "pointer" }}>名前</button>
-              <button onClick={onEditAvatar} style={{ padding: "6px 12px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 999, color: T.sub, fontSize: 11, cursor: "pointer" }}>写真・アイコン</button>
+              {isPhoneVerified ? (
+                <>
+                  <button onClick={onEditNick} style={{ padding: "6px 12px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 999, color: T.sub, fontSize: 11, cursor: "pointer" }}>名前</button>
+                  <button onClick={onEditAvatar} style={{ padding: "6px 12px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 999, color: T.sub, fontSize: 11, cursor: "pointer" }}>写真・アイコン</button>
+                </>
+              ) : (
+                <button onClick={onShowAuth} style={{ padding: "6px 12px", background: "#3b82f6", border: "none", borderRadius: 999, color: "white", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>📱 アカウント作成</button>
+              )}
             </div>
           </div>
         </div>
@@ -272,6 +294,25 @@ function FeedTab({ posts, userPosition, searchText, setSearchText, sortMode, set
         const locationCount = Array.isArray(p.locations) && p.locations.length > 0 ? p.locations.length : 1;
         return (
           <div key={p.id} style={{ background: T.card, border: `1px solid ${T.cardBorder}`, borderRadius: 14, padding: 12 }}>
+            {/* イベント表示 */}
+            {p.postType === "event" && p.eventDate && (() => {
+              const eventStatus = getEventStatus(p.eventDate, p.timestamp);
+              return eventStatus ? (
+                <div style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: "white",
+                  background: eventStatus.color,
+                  padding: "5px 10px",
+                  borderRadius: 6,
+                  marginBottom: 8,
+                  display: "inline-block",
+                }}>
+                  {eventStatus.label}
+                </div>
+              ) : null;
+            })()}
+            
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 6 }}>
               <div style={{ fontSize: 10, color: T.muted }}>
                 {timeAgo(p.timestamp)}{distLabel ? ` · ${distLabel}` : ""}{locationCount > 1 ? ` · ${locationCount}地点` : ""}
@@ -281,6 +322,22 @@ function FeedTab({ posts, userPosition, searchText, setSearchText, sortMode, set
             <div style={{ fontSize: 13, color: T.text, lineHeight: 1.7, marginBottom: 8 }}>
               {(p.text || "").slice(0, 90)}{(p.text || "").length > 90 ? "…" : ""}
             </div>
+            
+            {/* イベント時間表示 */}
+            {p.postType === "event" && p.eventDate && (
+              <div style={{
+                fontSize: 12,
+                fontWeight: 700,
+                color: "#6366f1",
+                marginBottom: 8,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}>
+                📅 {formatEventTime(p.eventDate)}
+              </div>
+            )}
+            
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <button onClick={() => onFlyTo?.(p)} style={{ padding: "5px 10px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 999, color: T.sub, fontSize: 11, cursor: "pointer" }}>地図で見る</button>
               <button onClick={() => onHelped?.(p.id)} style={{ padding: "5px 10px", background: "transparent", border: `1px solid ${T.border}`, borderRadius: 999, color: "#f59e0b", fontSize: 11, cursor: "pointer" }}>🙏 {(p.helpedBy || []).length}</button>
@@ -342,7 +399,7 @@ export default function Sidebar(props) {
 
       {activeTab === "feed" && <FeedTab posts={posts} userPosition={userPosition} searchText={searchText} setSearchText={setSearchText} sortMode={sortMode} setSortMode={setSortMode} onFlyTo={onFlyTo} onBookmark={onBookmark} bookmarks={bookmarks} onHelped={onHelped} onGoodJob={onGoodJob} T={T} isDark={isDark} />}
       {activeTab === "group" && <GroupTab T={T} isDark={isDark} onOpenGroupPanel={onOpenGroupPanel} />}
-      {activeTab === "profile" && <ProfileTab T={T} nickname={nickname} myPostsCount={myPostsCount} profileBio={profileBio} profileMyTags={profileMyTags} onEditNick={onEditNick} currentUser={currentUser} profileAvatarEmoji={profileAvatarEmoji} profileAvatarPhoto={profileAvatarPhoto} onEditAvatar={onEditAvatar} trajectoryHistory={trajectoryHistory} trajectoryCount={trajectoryCount} showTrajectoryOnMap={showTrajectoryOnMap} onToggleTrajectoryMap={onToggleTrajectoryMap} onShowTrajectoryHistory={onShowTrajectoryHistory} onOpenLocationSettings={onOpenLocationSettings} gpsPermissionStatus={gpsPermissionStatus} />}
+      {activeTab === "profile" && <ProfileTab T={T} nickname={nickname} myPostsCount={myPostsCount} profileBio={profileBio} profileMyTags={profileMyTags} onEditNick={onEditNick} currentUser={currentUser} profileAvatarEmoji={profileAvatarEmoji} profileAvatarPhoto={profileAvatarPhoto} onEditAvatar={onEditAvatar} trajectoryHistory={trajectoryHistory} trajectoryCount={trajectoryCount} showTrajectoryOnMap={showTrajectoryOnMap} onToggleTrajectoryMap={onToggleTrajectoryMap} onShowTrajectoryHistory={onShowTrajectoryHistory} onOpenLocationSettings={onOpenLocationSettings} gpsPermissionStatus={gpsPermissionStatus} isPhoneVerified={isPhoneVerified} onShowAuth={onShowAuth} suspended={suspended} trustScore={trustScore} />}
     </div>
   );
 }
