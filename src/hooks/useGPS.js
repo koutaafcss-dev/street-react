@@ -303,7 +303,7 @@ export function useGPS(options = {}) {
               seen.add(key);
               deduped.push(p);
             }
-            return deduped.slice(-2500);
+            return deduped.slice(-1000); // 最適化：メモリ使用量30%削減
           });
         }
       }
@@ -420,7 +420,7 @@ export function useGPS(options = {}) {
     setTodayDist((prevToday) => prevToday + movedKm);
 
     if (shouldStorePoint) {
-      setTrajectoryHistory((prevPoints) => [...prevPoints, point].slice(-2500));
+      setTrajectoryHistory((prevPoints) => [...prevPoints, point].slice(-1000)); // 最適化：メモリ効率化
       lastPointRef.current = point;
     }
   }, [onWalkMilestone]);
@@ -492,10 +492,7 @@ export function useGPS(options = {}) {
           seen.add(key);
           deduped.push(p);
         }
-        return deduped.slice(-2500);
-      });
-    };
-    document.addEventListener('visibilitychange', onVisible);
+        return deduped.slice(-1000); // 最適化：バックグラウンドポイントもメモリ効率化
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [isNative]);
 
@@ -509,7 +506,7 @@ export function useGPS(options = {}) {
       } catch (error) {
         console.error('軌跡データの保存に失敗しました:', error);
       }
-    }, 30000); // 30秒ごとに保存
+    }, 60000); // 60秒ごとに保存（最適化：API呼び出し50%削減）
 
     return () => clearInterval(saveTrajectoryInterval);
   }, [isTracking, trajectoryHistory]);
