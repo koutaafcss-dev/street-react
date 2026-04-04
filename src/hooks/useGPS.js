@@ -493,6 +493,9 @@ export function useGPS(options = {}) {
           deduped.push(p);
         }
         return deduped.slice(-1000); // 最適化：バックグラウンドポイントもメモリ効率化
+      });
+    };
+    document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
   }, [isNative]);
 
