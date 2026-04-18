@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"The code needs to be updated to remove the calendar, TODAY, mood status, and always online display from the UI, and simplify the profile in the ProfileTab component.","safe":false,"files":[]}
