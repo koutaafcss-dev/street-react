@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"Files need to be modified to remove unnecessary components for the MVP, but the changes cannot be made safely due to truncation in 'src/App.jsx' and 'src/components/Sidebar.jsx'.","safe":false,"files":[]}
