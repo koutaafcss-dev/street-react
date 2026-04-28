@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"Cannot complete the task safely due to truncated files. Please provide full file contents for src/App.jsx and src/components/Sidebar.jsx to identify the necessary changes.","safe":false,"files":[]}
