@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"The change cannot be safely made because the required UI components related to the calendar and other features are not fully visible in the truncated files. Without the complete code, I cannot confidently determine how to remove these features from the profile safely.","safe":false,"files":[]}
