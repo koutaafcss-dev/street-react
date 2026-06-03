@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"The ProfileTab component remains unchanged and the necessary components are not present in the current file structure to implement the requested deletions safely. Returning safe=false.","safe":false,"files":[]}
