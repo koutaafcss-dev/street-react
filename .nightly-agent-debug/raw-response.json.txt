@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"File truncation prevents safe updates to remove the calendar, TODAY, and mood status checks in Sidebar.jsx; returning safe=false.","safe":false,"files":[]}
