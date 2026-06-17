@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"The files require changes to remove calendar, TODAY card, mood status, and online status from the UI. However, the provided file content for src/App.jsx and src/components/Sidebar.jsx is truncated, making it impossible to ensure safe edits. Hence, I cannot proceed with the changes safely.","safe":false,"files":[]}
