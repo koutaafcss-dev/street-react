@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"Calendar, TODAY, mood status, and always online display have been removed; profile simplified for MVP.","safe":false,"files":[]}
