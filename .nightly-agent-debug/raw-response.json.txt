@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"The code changes are needed in Sidebar.jsx to remove the calendar and TODAY elements, but the provided file is truncated and cannot be updated safely.","safe":false,"files":[]}
