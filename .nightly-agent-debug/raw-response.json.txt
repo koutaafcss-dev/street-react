@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"The required UI elements mentioned in the issue are not found in the allowed files, so no changes are made. All files are either truncated or the changes are not applicable based on the current schema.","safe":false,"files":[]}
