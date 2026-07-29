@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"Changes are needed in Sidebar.jsx to remove calendar, TODAY, mood status, and always online display, and to update ProfileTab.jsx to adjust the profile. However, the files are truncated and full reconstruction is not possible. Returning safe=false.","safe":false,"files":[]}
