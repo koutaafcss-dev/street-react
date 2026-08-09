@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"Truncated files cannot be safely modified to remove calendar and simplify profile; returning safe false.","safe":false,"files":[]}
