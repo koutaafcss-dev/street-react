@@ -1,0 +1,16 @@
+import React from "react";
+
+const ProfileTab = ({ user }) => {
+  return (
+    <div>
+      <header>{user.name}</header>
+      <div>{user.bio}</div>
+      <div>{user.avatar}</div>
+      <div>{user.myTags.join(", ")}</div>
+      <div>最近の記録：{user.recentRecords}</div>
+      <div>街との関わり方サマリー：{user.communityEngagement}</div>
+    </div>
+  );
+};
+
+export default ProfileTab;
