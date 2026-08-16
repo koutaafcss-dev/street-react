@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"Changes are required in the Sidebar and ProfileTab components to remove unnecessary UI elements and simplify the profile. However, the files are truncated, and I cannot safely reconstruct the FULL updated file with the required changes. Returning safe=false.","safe":false,"files":[]}
