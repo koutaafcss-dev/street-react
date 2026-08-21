@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"Files need changes to remove specific UI elements for MVP, but safe=false due to truncation preventing safe reconstruction.","safe":false,"files":[]}
