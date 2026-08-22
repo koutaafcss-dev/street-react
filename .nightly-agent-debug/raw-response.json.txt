@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"ProfileTab.jsx does not need changes. Other files are truncated and cannot be safely updated to remove calendar, TODAY, mood status, or always online display.","safe":false,"files":[]}
