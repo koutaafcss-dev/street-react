@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"The changes required to remove calendar, TODAY card, mood status, and always online display, along with simplifying the profile, cannot be applied safely due to the truncation of the 'src/App.jsx' and 'src/components/Sidebar.jsx' files.","safe":false,"files":[]}
