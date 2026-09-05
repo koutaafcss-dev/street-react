@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"No changes needed, the profile structure is already minimal and does not include calendar, TODAY, mood status, or online display.","safe":false,"files":[]}
