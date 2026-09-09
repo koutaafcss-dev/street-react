@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"カレンダー、TODAY、気分、常時オンライン表示を削除し、プロフィールを最小構成に整理する必要がありますが、src/App.jsxがトランケートされており、安全に変更を適用できません。","safe":false,"files":[]}
