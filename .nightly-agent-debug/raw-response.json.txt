@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"ProfileTab.jsx already has the required minimum profile structure, no changes needed. Sidebar.jsx is partially truncated, changes cannot be safely made.","safe":false,"files":[]}
