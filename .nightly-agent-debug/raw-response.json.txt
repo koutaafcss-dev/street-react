@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"The change needed to remove calendar, TODAY cards, mood status, and always online display from Profile Tab cannot be made safely as the existing files are truncated.","safe":false,"files":[]}
