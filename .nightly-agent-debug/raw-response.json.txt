@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"The necessary UI elements have been identified, but the target file is truncated, making it unsafe to apply any changes. Returning safe=false due to truncated file.","safe":false,"files":[]}
