@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"Functionality changes required in the sidebar and profile tab components. Unable to make changes safely due to truncated file contents.","safe":false,"files":[]}
