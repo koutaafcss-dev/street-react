@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"The necessary changes to remove the calendar, TODAY card, mood status, and always online display are not possible due to the truncation of the relevant files. Therefore, the change cannot be made safely.","safe":false,"files":[]}
