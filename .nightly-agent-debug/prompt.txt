@@ -1,25 +1,31 @@
 You are a careful coding agent.
 Make the smallest safe change to solve this issue.
 
-Issue: カレンダーとTODAYカードと気分ステータスを削除する
+Issue: VIALE: remove calendar and simplify profile for MVP
 
 Goal:
-カレンダー、TODAYカードとApp.cssのカレンダー関連スタイル、気分ステータス、常時オンライン表示のコードを削除する。
+カレンダー、TODAY、気分、常時オンライン表示を削除し、プロフィールをVIALE向けの最小構成に整理する。
 
 Why:
-VIALEはSNS化を避け、投稿・検索・感謝・街との接点がコア。これらの機能は不要。
+VIALEは最速公開を優先しており、今は足し算より引き算が重要。
+主役は投稿・検索・助かった・街との関わり方であり、重複機能やSNS演出を減らしたい。
 
 Do not touch:
-- Firebase security rules
-- 認証処理
-- src/firebase.js
+- Firebase設定
+- Firestoreルール
+- 地図のコア表示ロジック
+- 投稿作成の基本導線
 
 Acceptance checks:
-- npm run build が通る
-- 削除した機能が画面に表示されていない
+- カレンダーがUIから消えている
+- TODAYカードが消えている
+- 気分ステータスが消えている
+- 常時オンライン表示が消えている
+- プロフィールに残るのは、ヘッダー、アバター、名前、Bio、マイタグ、最近の記録、街との関わり方サマリーのみ
+- ビルドが通る
 
 Allowed files:
-src/App.jsx, src/App.css, src/components/Sidebar.jsx, src/components/Profile.jsx
+src/App.jsx, src/components/Sidebar.jsx, src/components/ProfileTab.jsx
 
 Important safety rules:
 - Only edit files listed in "Allowed files".
@@ -40,139 +46,108 @@ import {
 import { db } from "./firebase";
 import { useAuth } from "./hooks/useAuth";
 import { useGPS } from "./hooks/useGPS";
-import { usePosts } from "./hooks/usePosts";
+import { usePagination } from "./hooks/usePagination";
 import { useNotifications } from "./hooks/useNotifications";
-import { useGamification, COMMUNITY_GOALS } from "./hooks/useGamification";
+import { useGroup } from "./hooks/useGroup";
+import { usePostComposer } from "./hooks/usePostComposer";
+import { useUiShellState } from "./hooks/useUiShellState";
+import { useTextValidation } from "./hooks/useTextValidation";
+import { useAIModerator } from "./hooks/useAIModerator";
+import { useImageVideoModerator } from "./hooks/useImageVideoModerator";
+import { usePostReporting } from "./hooks/usePostReporting";
 import MapView from "./components/MapView";
 import Sidebar from "./components/Sidebar";
 import PostForm from "./components/PostForm";
+import GroupPanel from "./components/GroupPanel";
+import ProfileAvatarEditor from "./components/ProfileAvatarEditor";
+import TrajectoryHistoryModal from "./components/TrajectoryHistoryModal";
+import AppealModal from "./components/AppealModal";
+import AdminDashboard from "./components/AdminDashboard";
+import PhoneAuthModal from "./components/PhoneAuthModal";
+import { expandPostsForMap } from "./utils/expandPostsForMap";
+import { compressImage } from "./utils/imageOptimization";
 
 const POST_RADIUS = 1;
 const POST_SUCCESS_MESSAGES=["📍 地図に記録しました","🌱 この場所に残しました","✨ マップに追加されました","💫 記録が完了しました","🗺️ 地図に刻まれました"];
 
-// ====================================================
-// SECURITY v7
-// ====================================================
-const NG_WORDS_EXACT=["死ね","死んで","死ねよ","死にな","死んでくれ","殺す","殺すぞ","殺せ","消えろ","消えてくれ","ぶっ殺す","ぶっ殺","首つれ","首吊れ","首くくれ","ぶちのめす","ぶっ飛ばす","ぶん殴る","刺す","刺してやる","爆破","テロ","通り魔","リスカ","自傷","練炭","飛び降り","飛び降りろ","首吊り","睡眠薬大量","死にたい死にたい","うざい","うざすぎ","きもい","きもすぎ","クズ","ゴミ","最低野郎","バカ野郎","アホンダラ","死に損ない","生きてる価値ない","生きる価値ない","存在がゴミ","邪魔な存在","ちんこ","まんこ","ちんぽ","ちんちん","おっぱい","おちんちん","セックス","えっち","えちえち","えろい","エロい","ヌード","全裸","射精","勃起","フェラ","クンニ","オナニー","オナ","自慰","ポルノ","アダルト","エロ動画","えろ動画","援助交際","援交","売春","買春","パパ活","ママ活","風俗","デリヘル","ソープ","AV女優","ナンパ","ガチナンパ","レイプ","強姦","痴漢","盗撮","下着泥棒","のぞき","のぞき魔","ロリコン","ショタコン","幼女","児童ポルノ","チョン","チョンコ","チャンコロ","支那","土人","黒人め","白人め","ガイジン出てけ","外国人は嫌い","きちがい","キチガイ","精神病","基地外","池沼","知的障害者め","メクラ","つんぼ","ビッコ","てんかん持ちが","発達障害のくせ","自閉症のくせ","女のくせ","女は黙れ","男のくせ","ゲイのくせ","ホモ野郎","レズ野郎","おかまが","LGBT失せろ","貧乏人","底辺","低学歴","ブスがい","ブサイクが野郎","デブのくせ","ハゲのくせ","チビのくせ","不細工","生活保護","ナマポ","覚せい剤","覚醒剤","大麻","マリファナ","ヘロイン","コカイン","危険ドラッグ","爆弾の作り方","毒の作り方","ウイルス作成","LINE交換","ライン交換","Discord交換","電話番号教えて","住所教えて","会いに行く"];
-const NG_PATTERNS=[/死[ねぬんで]+/,/殺[すせして害]/,/自[殺傷]/,/首[つ吊く]/,/飛[びん]降/
+
+
+
+// getDistance はSidebar等でも使うため残す
+function getDistance(lat1,lng1,lat2,lng2){const R=6371,dLat=((lat2-lat1)*Math.PI)/180,dLng=((lng2-lng1)*Math.PI)/180;const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));}
+function extractTags(text){return[...(text||"").matchAll(/#([^\s#、。！？.,!?]{1,20})/g)].m
 // ... (truncated)
-
-=== src/App.css ===
-TRUNCATED: no
-#root {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
-}
-
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
-}
-
-.card {
-  padding: 2em;
-}
-
-.read-the-docs {
-  color: #888;
-}
-
 
 === src/components/Sidebar.jsx ===
 TRUNCATED: yes
-import { useState, useMemo, useEffect, useRef } from "react";
-import { CATEGORIES, NEED_TAGS } from "./PostForm";
+import { useMemo } from "react";
+import TrustScoreDisplay from "./TrustScoreDisplay";
+import { getEventStatus, formatEventTime } from "../utils/eventHelpers";
 
-// ─── プロフィールカラー定義 ───
-export const HEADER_COLORS=[
-  {id:"city",   grad:"linear-gradient(135deg,#1e3a5f,#2d6a9f)",    label:"夜の街"},
-  {id:"park",   grad:"linear-gradient(135deg,#1a4731,#2d8a52)",    label:"公園"},
-  {id:"sunset", grad:"linear-gradient(135deg,#7c3022,#e87a35)",    label:"夕暮れ"},
-  {id:"rain",   grad:"linear-gradient(135deg,#2c3e50,#4a6fa5)",    label:"雨の日"},
-  {id:"sakura", grad:"linear-gradient(135deg,#7e2d58,#c96490)",    label:"さくら"},
-  {id:"night",  grad:"linear-gradient(135deg,#0a0c1a,#1e1b4b)",   label:"深夜"},
-  {id:"morning",grad:"linear-gradient(135deg,#1c3f6e,#d4881a)",   label:"朝焼け"},
-  {id:"earth",  grad:"linear-gradient(135deg,#3b2a1a,#7a5530)",   label:"大地"},
-  {id:"neon",   grad:"linear-gradient(135deg,#0f0c29,#302b63,#24243e)",label:"ネオン"},
-  {id:"ocean",  grad:"linear-gradient(135deg,#0575e6,#021b79)",   label:"海"},
-];
+function getDistance(lat1, lng1, lat2, lng2) {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLng = ((lng2 - lng1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 
-// ─── ユーティリティ ───
-function getDistance(lat1,lng1,lat2,lng2){const R=6371,dLat=((lat2-lat1)*Math.PI)/180,dLng=((lng2-lng1)*Math.PI)/180;const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));}
-function timeAgo(ts){const d=Date.now()-ts,m=Math.floor(d/60000),h=Math.floor(m/60),day=Math.floor(h/24);if(day>0)return day+"日前";if(h>0)return h+"時間前";if(m>0)return m+"分前";return"今";}
-function formatExpiry(ts){if(!ts)return null;const diff=ts-Date.now();if(diff<=0)return"期限切れ";if(diff<3600000)return`⏱ あと${Math.floor(diff/60000)}分`;if(diff<86400000)return`⏱ あと${Math.floor(diff/3600000)}時間`;return`⏱ あと${Math.floor(diff/86400000)}日`;}
+function timeAgo(ts) {
+  const d = Date.now() - ts;
+  const m = Math.floor(d / 60000);
+  const h = Math.floor(m / 60);
+  const day = Math.floor(h / 24);
+  if (day > 0) return `${day}日前`;
+  if (h > 0) return `${h}時間前`;
+  if (m > 0) return `${m}分前`;
+  return "今";
+}
 
-const DAILY_MISSIONS=[
-  {id:"post1",   label:"📝 今日初めて投稿する",   points:20},
-  {id:"goodjob3",label:"✨ GoodJobを3回送る",      points:25},
-  {id:"callout", label:"📢 呼びかけ投稿をする",    points:35},
-  {id:"photo",   label:"📷 写真付きで投稿する",    points:30},
-  {id:"walk1km", label:"🚶 今日1km以上歩く",       points:4
+function getPrimaryLatLng(post) {
+  if (typeof post?.lat === "number" && typeof post?.lng === "number") {
+    return [post.lat, post.lng];
+  }
+  if (Array.isArray(post?.locations) && post.locations.length > 0) {
+    const first = post.locations[0];
+    if (typeof first?.lat === "number" && typeof first?.lng === "number") {
+      return [first.lat, first.lng];
+    }
+  }
+  return [null, null];
+}
+
+function AvatarView({ profileAvatarEmoji, profileAvatarPhoto, nickname, onEditAvatar, T }) {
+  return (
+    <button
+      onClick={onEditAvatar}
+      style={{
+        width: 72,
+        height: 72,
+        borderRadius: 24,
+        border: `1px solid ${T.cardBorder}`,
+        background: T.card,
+        overflow: "hidden",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        flexShrink: 0,
+      }}
+      title="写真・アイコンを変更"
+    >
+      {profileAvatarPhoto ? (
+        <img
+          src={profileAvatarPhoto}
+          alt={nickname || "avatar"}
+          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+        />
+      ) : (
+        <span style={{ fontSize: 34, lineHeight: 1 }}>{profileAvatarEmoji || "🚶"}</
 // ... (truncated)
 
-=== src/components/Profile.jsx ===
-TRUNCATED: yes
-import { useRef } from "react";
-
-export const CATEGORIES = [
-  { id:"helped",  label:"🤝 助けた",      color:"#10b981", question:"誰をどう助けましたか？",         placeholder:"例：重い荷物を持っていたお年寄りを手伝いました。",    action:"助けた記録を残す",    hint:"誰かの力になった" },
-  { id:"thanks",  label:"🙏 ありがとう",   color:"#f59e0b", question:"誰に何を感謝しましたか？",       placeholder:"例：道に迷っていたら目的地まで案内してくれる人がいました。", action:"感謝の記録を残す",    hint:"感謝を伝えた" },
-  { id:"smile",   label:"😊 笑顔を届けた", color:"#ec4899", question:"どうやって笑顔を届けましたか？", placeholder:"例：泣いている子どもに声をかけたら笑顔になってくれました。", action:"笑顔の記録を残す",    hint:"誰かを笑顔にした" },
-  { id:"picked",  label:"🔍 発見・拾得",   color:"#3b82f6", question:"何を見つけましたか？",           placeholder:"例：公園でお財布が落ちていたので交番に届けました。",      action:"発見した記録を残す",  hint:"困りごとを見つけた" },
-  { id:"clean",   label:"🧹 清掃・美化",   color:"#8b5cf6", question:"どんな活動をしましたか？",       placeholder:"例：通勤途中に駅前のゴミが気になって少し拾いながら歩きました。", action:"清掃の記録を残す",    hint:"街をきれいにした" },
-  { id:"other",   label:"💬 その他",       color:"#64748b", question:"どんなことがありましたか？",     placeholder:"例：雨の日に傘を持っていない人に少し一緒に歩いてあげました。", action:"記録を残す",          hint:"その他の出来事" },
-];
-
-export default function PostForm({
-  postText, setPostText, validation,
-  postCategory, setPostCategory,
-  postType, setPostType,
-  postPhoto, setPostPhoto,
-  postEventDate, setPostEventDate,
-  postExpiry, setPostExpiry,
-  chainPost,
-  isDark, T,
-  canPost, weatherInfo, userPosition,
-  onConfirm,
-}) {
-  const fileRef = useRef(null);
-
-  if (!userPosition) {
-    return (
-      <div style={{
-        position:"absolute", bottom:0, left:0, right:0,
-        background: isDark ? "rgba(5,8,16,.97)" : "rgba(255,255,255,.98)",
-        borderRadius:"20px 20px 0 0",
-        border:`1px solid ${T.border}`, borderBottom:"none",
-        backdropFilter:"blur(28px)", zIndex:1100,
-        padding:"28px 20px 36px", textAlign:"center",
-      }}>
-        <div style={{fontSize:40, marginBottom:12}}>📍</div>
-        <div style={{fontSize:14, fontWeight:800, color:T.text, marginBottom:8}}>位置情報が必要です</div>
-      
-// ... (truncated)
+=== src/components/ProfileTab.jsx ===
+TRUNCATED: no
