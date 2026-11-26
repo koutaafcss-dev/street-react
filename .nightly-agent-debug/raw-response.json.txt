@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"Changes required in Sidebar and ProfileTab to remove unnecessary UI elements for MVP.","safe":false,"files":[]}
