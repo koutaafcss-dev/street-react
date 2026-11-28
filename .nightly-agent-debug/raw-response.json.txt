@@ -1,1 +1,1 @@
-{"summary":"Files are truncated, cannot safely reconstruct updated files.","safe":false,"files":[]}
+{"summary":"The change requested is partially defined by the provided files, and cannot be safely made due to truncation of src/App.jsx and src/components/Sidebar.jsx files.","safe":false,"files":[]}
